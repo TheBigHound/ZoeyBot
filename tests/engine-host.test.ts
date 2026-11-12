@@ -152,7 +152,7 @@ test('engine settings API accepts cwd and toolsets and rejects bad values with 4
       db.prepare('INSERT INTO bots(id,user_id,name,created_at,updated_at,engine) VALUES (?,?,?,?,?,?)').run('p','u','Primary',0,0,'primary');
       globalThis.fetch=async()=>new Response('{}',{status:200,headers:{'content-type':'application/json'}});
       const {configApi}=await import('./server/src/routes-config.ts');
-      const send=(body)=>configApi.request('/bots/p/engine',{method:'PATCH',headers:{cookie:'grokbot_session=s','content-type':'application/json'},body:JSON.stringify(body)});
+      const send=(body)=>configApi.request('/bots/p/engine',{method:'PATCH',headers:{cookie:'zoeybot_session=s','content-type':'application/json'},body:JSON.stringify(body)});
       let r=await send({toolsets:['terminal','nope']}); assert.equal(r.status,400); assert.match((await r.json()).error,/Unknown toolset/);
       r=await send({cwd:'not/absolute'}); assert.equal(r.status,400);
       const work=path.join(dir,'api-work'); fs.mkdirSync(work);

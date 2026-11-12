@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import WebSocket from 'ws';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-const base = process.env.BOT_HQ_URL ?? 'http://127.0.0.1:8787';
-const email = process.env.BOT_HQ_EMAIL ?? 'TheHound@HoundBuilt.com';
+const base = process.env.ZOEYBOT_URL ?? 'http://127.0.0.1:8787';
+const email = process.env.ZOEYBOT_EMAIL ?? 'TheHound@HoundBuilt.com';
 const health = await (await fetch(base+'/api/health')).json();
 assert.equal(health.ok,true);
 const login=await fetch(base+'/api/auth/dev',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,name:'TheHound'})});
@@ -45,7 +45,7 @@ if(process.argv.includes('--voice')) {
 }
 let chatVerified=false;
 if(process.argv.includes('--chat')) {
- const marker=randomUUID();const remotePath='/home/bot/bot-hq-smoke-'+marker;
+ const marker=randomUUID();const remotePath='/home/bot/zoeybot-smoke-'+marker;
  const command=`hostname; whoami; pwd; printf '%s' '${marker}' > '${remotePath}'`;
  const sent=await fetch(base+`/api/bots/${botId}/messages`,{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({text:`Installation verification: you must actually call your terminal tool to run this new command, not reuse prior output: ${command}. Return the real hostname, user, and directory.`})});
  assert.equal(sent.status,200);const baseline=(await sent.json()).row.seq;
@@ -54,7 +54,7 @@ if(process.argv.includes('--chat')) {
   const result=await(await fetch(base+`/api/bots/${botId}/rows`,{headers:{cookie}})).json();
   const fresh=result.rows.filter(r=>r.seq>baseline);
   const call=fresh.find(r=>r.body.type==='tool-call'&&r.body.name==='terminal'&&r.body.status==='done');
-  const answer=fresh.find(r=>r.body.type==='message'&&r.body.role==='assistant'&&!r.body.streaming&&r.body.text.includes('bot-hq')&&r.body.text.includes('/home/bot'));
+  const answer=fresh.find(r=>r.body.type==='message'&&r.body.role==='assistant'&&!r.body.streaming&&r.body.text.includes('zoeybot')&&r.body.text.includes('/home/bot'));
   if(call&&answer){chatVerified=true;break;}
   const error=fresh.find(r=>r.kind==='notice'&&r.body.tone==='error');
   assert(!error,error?.body.text);
@@ -62,7 +62,7 @@ if(process.argv.includes('--chat')) {
  }
  assert(chatVerified,'No real completed guest terminal call and matching final answer arrived');
  const home=process.env.HOME;
- const readBack=execFileSync('/usr/bin/ssh',['-p','2222','-i',home+'/.ssh/bot-hq-utm','-o','BatchMode=yes','-o','UserKnownHostsFile='+home+'/VirtualMachines/BotHQ/ssh_known_hosts','-o','StrictHostKeyChecking=yes','bot@127.0.0.1',`cat '${remotePath}' && rm '${remotePath}'`],{encoding:'utf8',timeout:15000});
+ const readBack=execFileSync('/usr/bin/ssh',['-p','2222','-i',home+'/.ssh/zoeybot-utm','-o','BatchMode=yes','-o','UserKnownHostsFile='+home+'/VirtualMachines/ZoeyBot/ssh_known_hosts','-o','StrictHostKeyChecking=yes','bot@127.0.0.1',`cat '${remotePath}' && rm '${remotePath}'`],{encoding:'utf8',timeout:15000});
  assert.equal(readBack,marker,'Agent did not write the requested real guest artifact');
 }
 console.log(JSON.stringify({ok:true,botId,authenticatedViewer:true,screenshotBytes:image.length,voiceProvider:options.provider,...(voiceVerified?{localVoiceRoundTrip:true}:{}),...(chatVerified?{localChatAndGuestTool:true}:{})}));

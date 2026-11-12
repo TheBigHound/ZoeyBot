@@ -154,7 +154,7 @@ function botToolsets(b: any): string[] {
 /** Where the bot's terminal and file tools work. */
 function botCwd(b: any, home: string): string {
   if (env.vmBox) return `/home/${env.vmUser}`;
-  if (env.localBox) return `/root/grokbot/files/${b.id}`;
+  if (env.localBox) return `/root/zoeybot/files/${b.id}`;
   if (typeof b?.cwd === 'string' && b.cwd && path.isAbsolute(b.cwd)) return b.cwd;
   return path.join(home, 'workspace');
 }

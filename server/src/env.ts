@@ -35,7 +35,7 @@ export const env = {
   vmHost: process.env.HQ_VM_HOST ?? '127.0.0.1',
   vmPort: Number(process.env.HQ_VM_PORT ?? 2222),
   vmUser: process.env.HQ_VM_USER ?? 'bot',
-  vmKey: process.env.HQ_VM_KEY ?? path.join(os.homedir(), '.ssh/bot-hq-utm'),
+  vmKey: process.env.HQ_VM_KEY ?? path.join(os.homedir(), '.ssh/zoeybot-utm'),
   vmKnownHosts: process.env.HQ_VM_KNOWN_HOSTS ?? new URL('../../data/vm-known-hosts', import.meta.url).pathname,
   port: Number(process.env.PORT ?? 8787),
   appUrl: process.env.APP_URL ?? 'http://localhost:5173',
@@ -47,7 +47,7 @@ export const env = {
   orgoKey: onThisMachine ? '' : secret('ORGO_API_KEY'),
   sessionSecret: req('SESSION_SECRET'),
   devLogin: onThisMachine || process.env.DEV_LOGIN === '1',
-  dbPath: process.env.DB_PATH ?? new URL('../../data/grokbot.db', import.meta.url).pathname,
+  dbPath: process.env.DB_PATH ?? new URL('../../data/zoeybot.db', import.meta.url).pathname,
 
   // ---- Hermes engine ----
   /** The `hermes` CLI used to start a gateway for each extra bot. */

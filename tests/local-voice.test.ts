@@ -34,7 +34,7 @@ test('local transcription validates audio limits before starting Whisper', async
 test('cached local Whisper transcribes real Zoey speech offline', { skip: process.env.LOCAL_VOICE_INTEGRATION !== '1' }, async () => {
   const { transcribeLocal, synthesizeLocal, localVoiceOptions } = await import('../server/src/local-voice.js');
   assert.equal((await localVoiceOptions()).capabilities.stt, true);
-  const wav = await synthesizeLocal('Hello. This is Zoey, speaking locally for Bot HQ.');
+  const wav = await synthesizeLocal('Hello. This is Zoey, speaking locally for ZoeyBot.');
   const text = await transcribeLocal(wav, 'en');
   assert.match(text, /speaking locally/i);
   console.log('Local transcript:', text);
@@ -87,11 +87,11 @@ test('VM voice HTTP routes do not mint secrets or contact cloud services', async
 
 test('installed phonon Zoey produces real WAV and 24k mono PCM', { skip: process.env.LOCAL_VOICE_INTEGRATION !== '1' }, async () => {
   const { synthesizeLocal, validateWav } = await import('../server/src/local-voice.js');
-  const wav = await synthesizeLocal('Hello. This is Zoey, speaking locally for Bot HQ.');
+  const wav = await synthesizeLocal('Hello. This is Zoey, speaking locally for ZoeyBot.');
   validateWav(wav);
   assert.ok(wav.length > 1000);
   const { writeFile } = await import('node:fs/promises');
-  await writeFile('/Users/thehound/.hermes/cache/scratch/bot-hq-zoey-verified.wav', wav);
+  await writeFile('/Users/thehound/.hermes/cache/scratch/zoeybot-zoey-verified.wav', wav);
   const pcm = await synthesizeLocal('Local speech is ready.', 'pcm');
   assert.ok(pcm.length > 1000);
   assert.equal(pcm.length % 2, 0);

@@ -34,7 +34,7 @@ Composer wiring gaps from the earlier handoff are closed and deployed. The live 
 
 ## Telegram
 
-Not started. No Telegram code exists in `server/src` or `web/src`. Planned approach: a Bot HQ-native
+Not started. No Telegram code exists in `server/src` or `web/src`. Planned approach: a ZoeyBot-native
 channel (Telegram Bot API long-polling in the server, allowlisted chat IDs, mapped to the bot's
 canonical conversation so transcripts show in the dashboard), not the isolated Hermes gateway's
 own Telegram platform (which would bypass the dashboard store).
@@ -42,7 +42,7 @@ own Telegram platform (which would bypass the dashboard store).
 ## Re-run
 
 ```sh
-cd /Users/thehound/bot-hq
+cd /Users/thehound/zoeybot
 node --import tsx --test tests/*.test.ts
 npm run typecheck
 node tests/local-app-live-smoke.mjs --voice

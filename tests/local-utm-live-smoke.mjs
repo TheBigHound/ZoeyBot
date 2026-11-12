@@ -10,7 +10,7 @@ const computer = await vmDesktop.getComputer('utm-local');
 assert.equal(computer.status, 'running');
 const shell = await vmDesktop.bash('utm-local', 'default', 'test "$(uname -s)" = Linux && hostname');
 assert.equal(shell.exit_code, 0, shell.output);
-assert.match(shell.output, /bot-hq/);
+assert.match(shell.output, /zoeybot/);
 const screenshot = await vmDesktop.screenshot('utm-local', 'default');
 const image = Buffer.from(screenshot.image, 'base64');
 assert.equal(screenshot.width, 1440); assert.equal(screenshot.height, 900);

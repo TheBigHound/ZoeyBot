@@ -39,7 +39,7 @@ export async function synthesizeLocal(text: string, codec: 'wav' | 'pcm' = 'wav'
     const wav = result.stdout;
     validateWav(wav);
     if (codec === 'wav') return wav;
-    const root = process.env.LOCAL_VOICE_TMPDIR || join(homedir(), '.cache', 'bot-hq', 'voice');
+    const root = process.env.LOCAL_VOICE_TMPDIR || join(homedir(), '.cache', 'zoeybot', 'voice');
     await mkdir(root, { recursive: true, mode: 0o700 });
     dir = await mkdtemp(join(root, 'tts-'));
     const input = join(dir, 'speech.wav');
@@ -90,7 +90,7 @@ export async function transcribeLocal(audio: Buffer, language = 'auto'): Promise
   let dir: string | undefined;
   try {
     if (!(await localSttAvailable())) throw new Error('Local transcription unavailable: installed Hermes runtime and cached Whisper model required');
-    const root = process.env.LOCAL_VOICE_TMPDIR || join(homedir(), '.cache', 'bot-hq', 'voice');
+    const root = process.env.LOCAL_VOICE_TMPDIR || join(homedir(), '.cache', 'zoeybot', 'voice');
     await mkdir(root, { recursive: true, mode: 0o700 });
     dir = await mkdtemp(join(root, 'stt-'));
     const input = join(dir, 'recording');

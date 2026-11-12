@@ -1,18 +1,18 @@
-# Bot HQ: explicit one-click macOS launcher
+# ZoeyBot: explicit one-click macOS launcher
 
 ## Installed artifact and commands
 
-- App: `/Users/thehound/Applications/Bot HQ.app`
-- Source/orchestrator: `scripts/BotHQLauncher.swift`, `scripts/local-services.py`
-- Private generated state: `data/launchd/` (0700); `config.json` and four `com.thehound.bothq.*.plist` files (0600).
+- App: `/Users/thehound/Applications/ZoeyBot.app`
+- Source/orchestrator: `scripts/ZoeyBotLauncher.swift`, `scripts/local-services.py`
+- Private generated state: `data/launchd/` (0700); `config.json` and four `com.thehound.zoeybot.*.plist` files (0600).
 - Private executable helpers: `data/launchd/start.command`, `data/launchd/stop.command` (0700).
 - Private logs: `data/logs/` (0700), `launcher.log`, `{engine,tunnels,web,ollama}.{out,err}.log` (0600).
 - Regression suite: `tests/local-services-test.py` (offline; no real launchd writes).
 
-Open **Bot HQ.app** to check/start the existing UTM VM and services, then open `http://127.0.0.1:8787`. A native progress window remains until ready; failures show an alert and a Show Logs button. The app then quits; launchd owns the services, not the app process. Quitting the browser does not stop Bot HQ.
+Open **ZoeyBot.app** to check/start the existing UTM VM and services, then open `http://127.0.0.1:8787`. A native progress window remains until ready; failures show an alert and a Show Logs button. The app then quits; launchd owns the services, not the app process. Quitting the browser does not stop ZoeyBot.
 
 ```sh
-cd /Users/thehound/bot-hq
+cd /Users/thehound/zoeybot
 /usr/bin/python3 scripts/local-services.py start --open-browser
 /usr/bin/python3 scripts/local-services.py status --check
 /usr/bin/python3 scripts/local-services.py status --check --require-managed
@@ -25,9 +25,9 @@ cd /Users/thehound/bot-hq
 
 ## No login autostart or VM creation
 
-Plists live in the project, **not** `~/Library/LaunchAgents`, system LaunchDaemons, or login items. Installation only generates files and compiles/ad-hoc signs the native app. The explicit `start` action bootstraps jobs into `gui/<uid>`. `RunAtLoad` applies to that explicit bootstrap, not a future login. `KeepAlive` restarts a loaded job if it exits; `bootout` removes it. Start Bot HQ explicitly again after login/reboot. Nothing registers or creates a VM, modifies VM shares, enrolls SSH host keys, installs models, or changes the user's live Hermes.
+Plists live in the project, **not** `~/Library/LaunchAgents`, system LaunchDaemons, or login items. Installation only generates files and compiles/ad-hoc signs the native app. The explicit `start` action bootstraps jobs into `gui/<uid>`. `RunAtLoad` applies to that explicit bootstrap, not a future login. `KeepAlive` restarts a loaded job if it exits; `bootout` removes it. Start ZoeyBot explicitly again after login/reboot. Nothing registers or creates a VM, modifies VM shares, enrolls SSH host keys, installs models, or changes the user's live Hermes.
 
-The fixed existing VM is `A1CE5F16-4C0F-42F6-BD61-742708F09212`. Startup opens the installed UTM.app in the background, uses `utmctl status` and, only if stopped/suspended/paused, `utmctl start --hide UUID`. Guest identity must match `bot-hq`, `bot`, `/home/bot` through pinned dedicated-key SSH. The launcher does not add host-folder sharing.
+The fixed existing VM is `A1CE5F16-4C0F-42F6-BD61-742708F09212`. Startup opens the installed UTM.app in the background, uses `utmctl status` and, only if stopped/suspended/paused, `utmctl start --hide UUID`. Guest identity must match `zoeybot`, `bot`, `/home/bot` through pinned dedicated-key SSH. The launcher does not add host-folder sharing.
 
 ## Owned jobs and process handles
 
@@ -35,10 +35,10 @@ Use `gui/$(id -u)/<label>` as the persistent process handle, **not** a remembere
 
 | Label | Listener(s) | Process | Working directory |
 |---|---|---|---|
-| `com.thehound.bothq.engine` | 127.0.0.1:8642 | private `runtime-hermes gateway run --no-supervise` | project root |
-| `com.thehound.bothq.tunnels` | 127.0.0.1:6099–6102,9299–9302 | foreground dedicated SSH tunnel | project root |
-| `com.thehound.bothq.web` | 127.0.0.1:8787 | installed absolute Node binary, `dist/index.js` | `server/` |
-| `com.thehound.bothq.ollama` | 127.0.0.1:11434 | installed Ollama, `serve` | project root |
+| `com.thehound.zoeybot.engine` | 127.0.0.1:8642 | private `runtime-hermes gateway run --no-supervise` | project root |
+| `com.thehound.zoeybot.tunnels` | 127.0.0.1:6099–6102,9299–9302 | foreground dedicated SSH tunnel | project root |
+| `com.thehound.zoeybot.web` | 127.0.0.1:8787 | installed absolute Node binary, `dist/index.js` | `server/` |
+| `com.thehound.zoeybot.ollama` | 127.0.0.1:11434 | installed Ollama, `serve` | project root |
 
 The Ollama job is optional: the existing healthy Ollama.app listener is normally reused, and its process is never stopped by the helper. No model is pulled. Reasoning model/provider switching remains in existing Engine settings; this launcher does not rewrite that selection. Phonon/Zoey remains the existing local voice adapter, not a second inference service.
 
@@ -55,7 +55,7 @@ The steps below document the original transition and gates for a future equivale
 1. Wait for all source-editing workers to finish. Build the final production application while the old components remain up:
 
    ```sh
-   cd /Users/thehound/bot-hq
+   cd /Users/thehound/zoeybot
    export PATH="/Users/thehound/.hermes/tools/node-26.12.1-darwin-arm64/bin:$PATH"
    npm run build
    /usr/bin/python3 tests/local-services-test.py -v
@@ -80,17 +80,17 @@ The steps below document the original transition and gates for a future equivale
 4. Start through the actual installed app and wait for the progress window to close:
 
    ```sh
-   /usr/bin/open '/Users/thehound/Applications/Bot HQ.app'
+   /usr/bin/open '/Users/thehound/Applications/ZoeyBot.app'
    ```
 
    Then verify the exact managed targets and health:
 
    ```sh
-   cd /Users/thehound/bot-hq
+   cd /Users/thehound/zoeybot
    /usr/bin/python3 scripts/local-services.py status --check --require-managed
-   /bin/launchctl print "gui/$(id -u)/com.thehound.bothq.engine"
-   /bin/launchctl print "gui/$(id -u)/com.thehound.bothq.tunnels"
-   /bin/launchctl print "gui/$(id -u)/com.thehound.bothq.web"
+   /bin/launchctl print "gui/$(id -u)/com.thehound.zoeybot.engine"
+   /bin/launchctl print "gui/$(id -u)/com.thehound.zoeybot.tunnels"
+   /bin/launchctl print "gui/$(id -u)/com.thehound.zoeybot.web"
    /usr/bin/curl --fail --silent --show-error http://127.0.0.1:8642/health
    /usr/bin/curl --fail --silent --show-error http://127.0.0.1:8787/api/health
    ```
@@ -103,7 +103,7 @@ The steps below document the original transition and gates for a future equivale
    node tests/local-app-live-smoke.mjs --chat
    # Guest desktop smoke creates/deletes one temporary second screen:
    node --env-file=.env --import tsx tests/local-utm-live-smoke.mjs
-   /usr/bin/open '/Users/thehound/Applications/Bot HQ.app'
+   /usr/bin/open '/Users/thehound/Applications/ZoeyBot.app'
    /usr/bin/python3 scripts/local-services.py status --check --require-managed
    ```
 
@@ -124,13 +124,13 @@ The steps below document the original transition and gates for a future equivale
 ## Rebuild/reinstall and non-disruptive verification
 
 ```sh
-cd /Users/thehound/bot-hq
+cd /Users/thehound/zoeybot
 # Generates private files, compiles Swift and ad-hoc signs; does NOT load jobs:
 /usr/bin/python3 scripts/local-services.py install
 /usr/bin/python3 tests/local-services-test.py -v
-/usr/bin/plutil -lint data/launchd/*.plist '/Users/thehound/Applications/Bot HQ.app/Contents/Info.plist'
-/usr/bin/codesign --verify --deep --strict --verbose=2 '/Users/thehound/Applications/Bot HQ.app'
-'/Users/thehound/Applications/Bot HQ.app/Contents/MacOS/BotHQLauncher' --self-test
+/usr/bin/plutil -lint data/launchd/*.plist '/Users/thehound/Applications/ZoeyBot.app/Contents/Info.plist'
+/usr/bin/codesign --verify --deep --strict --verbose=2 '/Users/thehound/Applications/ZoeyBot.app'
+'/Users/thehound/Applications/ZoeyBot.app/Contents/MacOS/ZoeyBotLauncher' --self-test
 /bin/bash -n data/launchd/start.command data/launchd/stop.command
 /usr/bin/python3 scripts/local-services.py status --check
 ```

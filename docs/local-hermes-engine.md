@@ -1,6 +1,6 @@
 # Isolated local Hermes engine
 
-Bot HQ's primary gateway uses `data/primary-hermes`, not the user's live `~/.hermes` configuration or a named Hermes profile. It listens on **127.0.0.1:8642** and defaults to installed **Ollama `qwen3.5:35b`** at `http://127.0.0.1:11434/v1` (Chat Completions). `phonon` is speech-only; `nomic-embed-text` is embeddings-only. Bot HQ filters the Ollama picker using `/api/show` completion capabilities.
+ZoeyBot's primary gateway uses `data/primary-hermes`, not the user's live `~/.hermes` configuration or a named Hermes profile. It listens on **127.0.0.1:8642** and defaults to installed **Ollama `qwen3.5:35b`** at `http://127.0.0.1:11434/v1` (Chat Completions). `phonon` is speech-only; `nomic-embed-text` is embeddings-only. ZoeyBot filters the Ollama picker using `/api/show` completion capabilities.
 
 ## Dashboard environment
 
@@ -8,15 +8,15 @@ Set these in the dashboard launch environment (do not print the private gateway 
 
 ```sh
 HQ_VM=1
-HQ_VM_KNOWN_HOSTS=/Users/thehound/VirtualMachines/BotHQ/ssh_known_hosts
-HERMES_HOME_PRIMARY=/Users/thehound/bot-hq/data/primary-hermes
+HQ_VM_KNOWN_HOSTS=/Users/thehound/VirtualMachines/ZoeyBot/ssh_known_hosts
+HERMES_HOME_PRIMARY=/Users/thehound/zoeybot/data/primary-hermes
 HERMES_URL=http://127.0.0.1:8642
-HERMES_BIN=/Users/thehound/bot-hq/data/primary-hermes/runtime-hermes
+HERMES_BIN=/Users/thehound/zoeybot/data/primary-hermes/runtime-hermes
 ```
 
 The server reads `API_SERVER_KEY` from the isolated home's mode-0600 `.env`; `HERMES_KEY` need not be duplicated. `.env` contains credentials only (`API_SERVER_KEY`, `HQ_MCP_TOKEN`). Listener settings, model/provider, SSH settings, and MCP credential references are in config, created with the actual `hermes config set` CLI. Managed homes also use that CLI; refreshes preserve existing model/provider choices.
 
-Restart **the Bot HQ dashboard backend only** after loading changed engine code or changing `HERMES_BIN`; do not restart or change the user's live Hermes. A dashboard that queried the engine before its key existed may still have the old cached empty key and show ready but no model/providers until this code is loaded. The new code retries discovery of an initially absent private key. The primary Bot HQ gateway is independently managed and the dashboard never restarts it.
+Restart **the ZoeyBot dashboard backend only** after loading changed engine code or changing `HERMES_BIN`; do not restart or change the user's live Hermes. A dashboard that queried the engine before its key existed may still have the old cached empty key and show ready but no model/providers until this code is loaded. The new code retries discovery of an initially absent private key. The primary ZoeyBot gateway is independently managed and the dashboard never restarts it.
 
 ## Primary gateway launch
 
@@ -24,11 +24,11 @@ The following starts only the private gateway. Stop an existing private gateway 
 
 ```sh
 env -i HOME=/Users/thehound USER=thehound LANG=en_US.UTF-8 \
-  PATH=/Users/thehound/bot-hq/data/primary-hermes/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
-  HERMES_HOME=/Users/thehound/bot-hq/data/primary-hermes \
-  HERMES_GATEWAY_LOCK_DIR=/Users/thehound/bot-hq/data/primary-hermes/locks \
-  BH_HOME=/Users/thehound/bot-hq/data/primary-hermes/browser-harness \
-  /Users/thehound/bot-hq/data/primary-hermes/runtime-hermes gateway run --no-supervise
+  PATH=/Users/thehound/zoeybot/data/primary-hermes/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+  HERMES_HOME=/Users/thehound/zoeybot/data/primary-hermes \
+  HERMES_GATEWAY_LOCK_DIR=/Users/thehound/zoeybot/data/primary-hermes/locks \
+  BH_HOME=/Users/thehound/zoeybot/data/primary-hermes/browser-harness \
+  /Users/thehound/zoeybot/data/primary-hermes/runtime-hermes gateway run --no-supervise
 ```
 
 ### Dependency-runtime caveat
@@ -39,7 +39,7 @@ The private `runtime-hermes` adapter was generated from the installed launcher's
 
 ## VM safety boundary
 
-- Hermes terminal and file tools use the native SSH backend: `bot@127.0.0.1:2222`, dedicated key `/Users/thehound/.ssh/bot-hq-utm`, workspace `/home/bot`.
+- Hermes terminal and file tools use the native SSH backend: `bot@127.0.0.1:2222`, dedicated key `/Users/thehound/.ssh/zoeybot-utm`, workspace `/home/bot`.
 - The SSH/SCP wrappers prepend strict host verification and the independently pinned project-specific known-hosts file. They disable ControlMaster sockets: deep private-home scratch paths exceed macOS's Unix-domain-socket limit. No global `~/.ssh/known_hosts` writes or SSH host-config inheritance are needed.
 - `HQ_VM_KNOWN_HOSTS` selects the pin file for the dashboard's VM transport. Without it the transport uses `data/vm-known-hosts` and fails closed until that file is independently provisioned; it never auto-enrolls a key.
 - API toolsets are restricted to terminal, file, and todo (plus configured MCP tools). Native host browser, computer-use, Python code execution, delegation, and broad `hermes-api-server` bundles are not enabled.
@@ -55,9 +55,9 @@ The existing per-bot Engine settings API stores `provider` and `model` in the da
 
 - Ollama direct inference returned `LOCAL_QWEN_OK`.
 - Private authenticated `/v1/responses` returned `HERMES_LOCAL_GATEWAY_OK`, model `qwen3.5:35b`, status `completed`.
-- The actual gateway's terminal tool returned `bot-hq`, `bot`, `/home/bot` with exit code 0.
-- The actual gateway's `read_file('/etc/hostname')` returned `bot-hq`, proving file operations reached the guest rather than the Mac.
-- Private `/health`, `/v1/models`, `/api/model/options`, and Bot HQ `engineInfo` returned successfully; the resulting Ollama chat picker contains only `qwen3.5:35b`.
+- The actual gateway's terminal tool returned `zoeybot`, `bot`, `/home/bot` with exit code 0.
+- The actual gateway's `read_file('/etc/hostname')` returned `zoeybot`, proving file operations reached the guest rather than the Mac.
+- Private `/health`, `/v1/models`, `/api/model/options`, and ZoeyBot `engineInfo` returned successfully; the resulting Ollama chat picker contains only `qwen3.5:35b`.
 - A real managed-home CLI creation and refresh retained a deliberately changed model choice and the SSH/toolset policy; temporary smoke home removed afterward. No second managed gateway was left running.
 - `tests/engine-local.test.ts` plus `tests/vm-backend.test.ts` and server typecheck pass. Test-runner Node deprecation warnings are environmental, not failed assertions.
 
@@ -72,7 +72,7 @@ The VM is gone. Every bot's Hermes gateway runs on the macOS host itself: one He
 | Variable | Meaning |
 | --- | --- |
 | `HQ_HOST=1` | Host mode. Mutually exclusive with `HQ_VM=1` and `HQ_LOCAL=1` (the server refuses to start with both). Sets `env.hostMode`; `env.vmBox` and `env.localBox` are both `false`. |
-| `HERMES_HOME_PRIMARY` | The primary bot's home (`data/primary-hermes`). Still managed outside the app: never rewritten or restarted by Bot HQ. |
+| `HERMES_HOME_PRIMARY` | The primary bot's home (`data/primary-hermes`). Still managed outside the app: never rewritten or restarted by ZoeyBot. |
 | `HERMES_BIN`, `HERMES_URL`, `ENGINES_DIR`, `ENGINE_PORT_BASE`, `MCP_BASE_URL` | Unchanged. Managed homes live under `ENGINES_DIR/<botId>`. |
 
 In host mode the server binds `127.0.0.1`, `DEV_LOGIN` is implied, `XAI_API_KEY`/`COMPOSIO_API_KEY`/`ORGO_API_KEY` are optional, and `orgoComputerId` is empty: there are no screens, `screenForWork` returns immediately, and `writeHome` never calls `screenFor`/CDP.

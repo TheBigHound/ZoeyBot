@@ -53,7 +53,7 @@ test('Engine settings API persists per-bot model/provider choices and reset', ()
     globalThis.fetch=async ()=>new Response('{}',{status:200,headers:{'content-type':'application/json'}});
     const {configApi}=await import('./server/src/routes-config.ts');
     for(const choice of [{provider:'ollama',model:'qwen3.5:35b'},{provider:'openai-api',model:'later-model'},{provider:null,model:null}]) {
-      const r=await configApi.request('/bots/b/engine',{method:'PATCH',headers:{cookie:'grokbot_session=test-session','content-type':'application/json'},body:JSON.stringify(choice)});
+      const r=await configApi.request('/bots/b/engine',{method:'PATCH',headers:{cookie:'zoeybot_session=test-session','content-type':'application/json'},body:JSON.stringify(choice)});
       assert.equal(r.status,200,await r.text());
       const row=db.prepare('SELECT provider,model FROM bots WHERE id=?').get('b'); assert.deepEqual(row,choice);
     }

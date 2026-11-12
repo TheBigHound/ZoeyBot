@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback-only X11 desktops for the dedicated Bot HQ guest. Invoked via SSH.
+"""Loopback-only X11 desktops for the dedicated ZoeyBot guest. Invoked via SSH.
 No HTTP daemon, credentials or exposed control API. Standard library only.
 """
 import base64
@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-ROOT = Path('/run/bot-hq')
+ROOT = Path('/run/zoeybot')
 WIDTH, HEIGHT = 1440, 900
 
 
@@ -70,7 +70,7 @@ def ensure(n):
     display = ':%s' % n
     if not Path('/tmp/.X11-unix/X%s' % n).exists():
         launch(n, 'xvfb', ['Xvfb', display, '-screen', '0', '%sx%sx24' % (WIDTH, HEIGHT), '-nolisten', 'tcp', '-ac'])
-        wait_for(lambda: Path('/tmp/.X11-unix/X%s' % n).exists(), 'Xvfb did not start; see /run/bot-hq logs')
+        wait_for(lambda: Path('/tmp/.X11-unix/X%s' % n).exists(), 'Xvfb did not start; see /run/zoeybot logs')
     # Verify the display actually answers, not just a stale socket.
     run(['xdpyinfo', '-display', display], n)
     wm = ROOT / ('%s-openbox.pid' % n)
@@ -86,10 +86,10 @@ def ensure(n):
     if not port_open(5900 + n):
         launch(n, 'vnc', ['x11vnc', '-display', display, '-rfbport', str(5900 + n), '-localhost',
                           '-forever', '-shared', '-nopw', '-xkb', '-noxdamage'])
-        wait_for(lambda: port_open(5900 + n), 'x11vnc did not start; see /run/bot-hq logs')
+        wait_for(lambda: port_open(5900 + n), 'x11vnc did not start; see /run/zoeybot logs')
     if not port_open(6000 + n):
         launch(n, 'websockify', ['websockify', '127.0.0.1:%s' % (6000 + n), '127.0.0.1:%s' % (5900 + n)])
-        wait_for(lambda: port_open(6000 + n), 'websockify did not start; see /run/bot-hq logs')
+        wait_for(lambda: port_open(6000 + n), 'websockify did not start; see /run/zoeybot logs')
     (ROOT / ('%s.screen' % n)).touch()
     return descriptor(n)
 

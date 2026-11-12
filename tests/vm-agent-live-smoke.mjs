@@ -46,14 +46,14 @@ class H(BaseHTTPRequestHandler):
   self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.end_headers();self.wfile.write(PAGE)
  def log_message(self,*a): pass
 s=HTTPServer(('127.0.0.1',0),H)
-open('/run/bot-hq/browser-smoke-${unique}','w').write(str(s.server_port))
+open('/run/zoeybot/browser-smoke-${unique}','w').write(str(s.server_port))
 s.serve_forever()
 `;
   fixture = await guest(`import json, subprocess, sys,base64
 source=base64.b64decode('${Buffer.from(serverSource).toString('base64')}').decode()
 p=subprocess.Popen([sys.executable,'-c',source],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
 import time,pathlib
-path=pathlib.Path('/run/bot-hq/browser-smoke-${unique}')
+path=pathlib.Path('/run/zoeybot/browser-smoke-${unique}')
 for _ in range(50):
  if path.exists(): break
  time.sleep(.1)
@@ -112,7 +112,7 @@ print(json.dumps(True))`);
   if (fixture?.pid) {
     await guest(`import os,json,pathlib,signal,socket,time
 os.kill(${fixture.pid},signal.SIGTERM)
-path=pathlib.Path('/run/bot-hq/browser-smoke-${unique}')
+path=pathlib.Path('/run/zoeybot/browser-smoke-${unique}')
 path.unlink(missing_ok=True)
 for _ in range(50):
  try:

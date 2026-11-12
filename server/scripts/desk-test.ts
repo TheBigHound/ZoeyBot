@@ -156,7 +156,7 @@ async function browsers(): Promise<Browser[]> {
     ours: l.includes('--hq-screen='),
   }));
 }
-const browserOf = (list: Browser[], botId: string) => list.find((b) => b.profile === `/root/grokbot/profiles/${botId}`);
+const browserOf = (list: Browser[], botId: string) => list.find((b) => b.profile === `/root/zoeybot/profiles/${botId}`);
 const foreignPids = (list: Browser[]) => list.filter((b) => !b.ours).map((b) => b.pid).sort().join(',');
 
 /** What the home page in the Chrome on `port` says. */

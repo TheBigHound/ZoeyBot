@@ -1,5 +1,5 @@
 {
-  "name": "@grokbot/server",
+  "name": "@zoeybot/server",
   "private": true,
   "type": "module",
   "scripts": {

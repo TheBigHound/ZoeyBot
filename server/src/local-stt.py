@@ -1,4 +1,4 @@
-"""Offline-only Bot HQ transcription; invoked in Hermes's managed interpreter.
+"""Offline-only ZoeyBot transcription; invoked in Hermes's managed interpreter.
 Never reads or changes Hermes voice settings. Never downloads model weights.
 """
 import json

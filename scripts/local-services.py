@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Bot HQ's explicit, per-login launchd lifecycle (host mode: every agent runs on this Mac). No login auto-start."""
+"""ZoeyBot's explicit, per-login launchd lifecycle (host mode: every agent runs on this Mac). No login auto-start."""
 from pathlib import Path
 import shlex
 import json
@@ -21,7 +21,7 @@ class ServiceError(RuntimeError):
     pass
 
 
-PREFIX = 'com.thehound.bothq.'
+PREFIX = 'com.thehound.zoeybot.'
 # Host mode: every Hermes gateway runs on this Mac. Start order matters: the web endpoint serves MCP to the engine.
 SERVICES = ('ollama', 'web', 'engine')
 # Keys an older (VM-era) config.json may still carry; they are ignored so `install` can be re-run over it.
@@ -42,7 +42,10 @@ def recognized_owner(name, owner, config):
     if name == 'engine':
         return (cwd in (str(root), str(root / 'data/primary-hermes')) and
                 'gateway run --no-supervise' in command and
-                ('BOT_HQ_HERMES_HOME' in command or str(root / 'data/primary-hermes/runtime-hermes') in args))
+                # The generated runtime-hermes adapter passes the private home through ZOEYBOT_HERMES_HOME;
+                # adapters generated before the rename still use BOT_HQ_HERMES_HOME.
+                (any(marker in command for marker in ('ZOEYBOT_HERMES_HOME', 'BOT_HQ_HERMES_HOME')) or
+                 str(root / 'data/primary-hermes/runtime-hermes') in args))
     if name == 'web':
         return ((cwd == str(root) and 'server/src/index.ts' in args) or
                 (cwd == str(root / 'server') and 'dist/index.js' in args)) and any('env-file=' in arg for arg in args)
@@ -243,7 +246,7 @@ class LocalBackend:
 
     def target(self, name):
         if name not in make_jobs(self.config):
-            raise ServiceError('not an owned Bot HQ service: ' + name)
+            raise ServiceError('not an owned ZoeyBot service: ' + name)
         return self.domain + '/' + PREFIX + name
 
     def job_path(self, name):
@@ -360,15 +363,15 @@ def lifecycle_lock(state):
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise ServiceError('Bot HQ start/stop/install is already in progress; wait for it to finish')
+            raise ServiceError('ZoeyBot start/stop/install is already in progress; wait for it to finish')
         yield
     finally:
         os.close(descriptor)
 
 
 def bundle_info(config):
-    return dict(CFBundleIdentifier='com.thehound.bothq.launcher', CFBundleName='Bot HQ',
-                CFBundleDisplayName='Bot HQ', CFBundleExecutable='BotHQLauncher',
+    return dict(CFBundleIdentifier='com.thehound.zoeybot.launcher', CFBundleName='ZoeyBot',
+                CFBundleDisplayName='ZoeyBot', CFBundleExecutable='ZoeyBotLauncher',
                 CFBundlePackageType='APPL', CFBundleShortVersionString='1.0', CFBundleVersion='1',
                 LSMinimumSystemVersion='13.0', LSUIElement=True, NSHighResolutionCapable=True,
                 BHLauncherPath=str(Path(config['root']) / 'scripts/local-services.py'), BHRoot=config['root'])
@@ -384,7 +387,7 @@ def build_app(config, destination):
         if not existing.is_file() or plistlib.loads(existing.read_bytes()).get('CFBundleIdentifier') != info['CFBundleIdentifier']:
             raise ServiceError('refusing to replace an unrelated existing application')
     destination.parent.mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp(prefix='.Bot-HQ-build-', dir=str(destination.parent)))
+    stage = Path(tempfile.mkdtemp(prefix='.ZoeyBot-build-', dir=str(destination.parent)))
     app = stage / destination.name
     backup = stage / 'previous.app'
     try:
@@ -395,7 +398,7 @@ def build_app(config, destination):
         cache = Path(config['state']) / 'build/module-cache'
         private_directory(cache)
         run_command(['/usr/bin/swiftc', '-O', '-module-cache-path', str(cache),
-                     str(Path(config['root']) / 'scripts/BotHQLauncher.swift'), '-o', str(contents / 'MacOS/BotHQLauncher')], timeout=180)
+                     str(Path(config['root']) / 'scripts/ZoeyBotLauncher.swift'), '-o', str(contents / 'MacOS/ZoeyBotLauncher')], timeout=180)
         run_command(['/usr/bin/codesign', '--force', '--sign', '-', '--timestamp=none', str(app)])
         run_command(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)])
         if destination.exists():
@@ -407,7 +410,7 @@ def build_app(config, destination):
                 backup.rename(destination)
             raise
         run_command(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(destination)])
-        result = run_command([str(destination / 'Contents/MacOS/BotHQLauncher'), '--self-test'])
+        result = run_command([str(destination / 'Contents/MacOS/ZoeyBotLauncher'), '--self-test'])
         if json.loads(result.stdout) != {'launcher': info['BHLauncherPath'], 'root': info['BHRoot'], 'action': 'start --open-browser'}:
             raise ServiceError('installed app self-test did not match this installation')
     finally:
@@ -430,10 +433,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     install = sub.add_parser('install', help='generate private jobs and compile/sign app; never loads jobs')
-    install.add_argument('--app', default=str(Path.home() / 'Applications/Bot HQ.app'))
+    install.add_argument('--app', default=str(Path.home() / 'Applications/ZoeyBot.app'))
     start = sub.add_parser('start', help='start the required per-login services on this Mac')
     start.add_argument('--open-browser', action='store_true')
-    sub.add_parser('stop', help='unload only Bot HQ-owned jobs; leave external services alone')
+    sub.add_parser('stop', help='unload only ZoeyBot-owned jobs; leave external services alone')
     status = sub.add_parser('status', help='read-only listener ownership and HTTP health')
     status.add_argument('--check', action='store_true', help='exit nonzero unless every component is healthy')
     status.add_argument('--require-managed', action='store_true', help='also require engine and web to be loaded under owned jobs')
@@ -465,7 +468,7 @@ def main(argv=None):
     with lifecycle_lock(Path(config['state'])):
         if args.command == 'start':
             start_services(backend, open_browser=args.open_browser)
-            print('Bot HQ ready at http://127.0.0.1:8787')
+            print('ZoeyBot ready at http://127.0.0.1:8787')
         else:
             stop_services(backend)
             print('Owned jobs unloaded. External services untouched.')
@@ -476,6 +479,6 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except (ServiceError, OSError, ValueError, subprocess.TimeoutExpired) as error:
-        print('Bot HQ: ' + str(error), file=sys.stderr)
+        print('ZoeyBot: ' + str(error), file=sys.stderr)
         sys.exit(1)
 

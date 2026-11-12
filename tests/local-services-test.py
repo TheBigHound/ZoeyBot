@@ -35,7 +35,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(set(jobs), {'engine', 'web', 'ollama'})
         self.assertEqual(self.m.SERVICES, ('ollama', 'web', 'engine'))
         for name, job in jobs.items():
-            self.assertEqual(job['Label'], 'com.thehound.bothq.' + name)
+            self.assertEqual(job['Label'], 'com.thehound.zoeybot.' + name)
             self.assertEqual(job['ProgramArguments'][:2], ['/usr/bin/env', '-i'])
             self.assertTrue(job['RunAtLoad'])
             self.assertTrue(job['KeepAlive'])
@@ -83,6 +83,8 @@ class LauncherTests(unittest.TestCase):
         owner = {'pid': 17, 'command': "python -I -c os.environ.pop('BOT_HQ_HERMES_HOME') gateway run --no-supervise", 'cwd': private}
         self.assertEqual(self.m.service_action('engine', {8642: [owner]}, False, True, config), 'reuse')
         self.assertEqual(self.m.service_action('engine', {8642: [owner]}, True, True, config), 'keep')
+        renamed = dict(owner, command=owner['command'].replace('BOT_HQ_HERMES_HOME', 'ZOEYBOT_HERMES_HOME'))
+        self.assertEqual(self.m.service_action('engine', {8642: [renamed]}, False, True, config), 'reuse')
         with self.assertRaisesRegex(self.m.ServiceError, 'unhealthy.*external'):
             self.m.service_action('engine', {8642: [owner]}, False, False, config)
         owner['cwd'] = '/Users/test/.hermes'
@@ -107,9 +109,9 @@ class LauncherTests(unittest.TestCase):
             state = root / 'data/launchd'
             self.assertEqual((state.stat().st_mode & 0o777), 0o700)
             self.assertEqual(((root / 'data/logs').stat().st_mode & 0o777), 0o700)
-            for name in ('config.json',) + tuple('com.thehound.bothq.' + name + '.plist' for name in ('engine', 'web', 'ollama')):
+            for name in ('config.json',) + tuple('com.thehound.zoeybot.' + name + '.plist' for name in ('engine', 'web', 'ollama')):
                 self.assertEqual(((state / name).stat().st_mode & 0o777), 0o600)
-            self.assertFalse((state / 'com.thehound.bothq.tunnels.plist').exists())
+            self.assertFalse((state / 'com.thehound.zoeybot.tunnels.plist').exists())
             for name in ('start.command', 'stop.command'):
                 script = state / name
                 self.assertEqual(script.stat().st_mode & 0o777, 0o700)
@@ -124,7 +126,7 @@ class LauncherTests(unittest.TestCase):
             root = Path(directory) / 'repo'
             c = self.m.make_config(root, Path('/Users/test'), '/opt/node/bin/node', '/usr/local/bin/ollama', '/opt/voice/bin/ffmpeg', '/opt/voice/bin/hermes')
             old = dict(c, vm_uuid='A1CE5F16-4C0F-42F6-BD61-742708F09212', utmctl='/Users/test/Applications/UTM.app/Contents/MacOS/utmctl',
-                       key='/Users/test/.ssh/bot-hq-utm', known_hosts='/Users/test/VirtualMachines/BotHQ/ssh_known_hosts')
+                       key='/Users/test/.ssh/zoeybot-utm', known_hosts='/Users/test/VirtualMachines/ZoeyBot/ssh_known_hosts')
             self.m.private_write(root / 'data/launchd/config.json', json.dumps(old))
             self.assertEqual(self.m.load_config(root), c)
             self.m.install_files(c)
@@ -175,7 +177,7 @@ class LauncherTests(unittest.TestCase):
         args = b.runner.call_args.args[0]
         self.assertEqual(args[:2], ['/bin/launchctl', 'bootstrap'])
         self.assertEqual(args[2], 'gui/' + str(os.getuid()))
-        self.assertTrue(args[3].endswith('/data/launchd/com.thehound.bothq.engine.plist'))
+        self.assertTrue(args[3].endswith('/data/launchd/com.thehound.zoeybot.engine.plist'))
         b.loaded.assert_called_once_with('engine')
 
     def test_backend_stop_does_not_signal_external_port_owners(self):
@@ -186,7 +188,7 @@ class LauncherTests(unittest.TestCase):
         b.loaded = Mock(side_effect=[True, False])
         b.runner.return_value.returncode = 0
         b.bootout('engine')
-        self.assertEqual(b.runner.call_args.args[0], ['/bin/launchctl', 'bootout', 'gui/%d/com.thehound.bothq.engine' % os.getuid()])
+        self.assertEqual(b.runner.call_args.args[0], ['/bin/launchctl', 'bootout', 'gui/%d/com.thehound.zoeybot.engine' % os.getuid()])
         self.assertEqual(b.loaded.call_count, 2)
 
     def test_http_health_requires_component_identity_not_just_http_200(self):
@@ -229,8 +231,8 @@ class LauncherTests(unittest.TestCase):
 
     def test_bundle_metadata_points_to_current_install_and_has_no_login_hooks(self):
         info = self.m.bundle_info(self.config())
-        self.assertEqual(info['CFBundleIdentifier'], 'com.thehound.bothq.launcher')
-        self.assertEqual(info['CFBundleExecutable'], 'BotHQLauncher')
+        self.assertEqual(info['CFBundleIdentifier'], 'com.thehound.zoeybot.launcher')
+        self.assertEqual(info['CFBundleExecutable'], 'ZoeyBotLauncher')
         self.assertEqual(info['BHLauncherPath'], str(ROOT / 'scripts/local-services.py'))
         self.assertEqual(info['BHRoot'], str(ROOT))
         self.assertTrue(info['LSUIElement'])
