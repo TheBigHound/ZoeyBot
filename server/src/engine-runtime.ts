@@ -4,10 +4,17 @@ export interface VmEngineTarget { host: string; port: number; user: string; key:
 export const KNOWN_TOOLSETS = [
   'terminal', 'file', 'web', 'browser', 'skills', 'todo', 'memory', 'vision',
   'code_execution', 'delegation', 'chat_history_lookup', 'cronjob', 'image_gen', 'x_search',
+  // App-side pseudo toolset: the user's connected apps (Composio) served through the hq MCP server.
+  // Not a Hermes toolset; stripped before the config is written, enforced by mcp.ts.
+  'apps',
 ] as const;
 
+/** Toolsets that are policy for this server's own MCP endpoint, not Hermes toolsets. */
+export const APP_TOOLSETS = new Set<string>(['apps']);
+export const hermesToolsets = (list: string[]) => list.filter((t) => !APP_TOOLSETS.has(t));
+
 /** What a new bot gets on the host when nobody chose otherwise. */
-export const DEFAULT_TOOLSETS: string[] = ['terminal', 'file', 'web', 'browser', 'skills', 'todo', 'memory', 'vision'];
+export const DEFAULT_TOOLSETS: string[] = ['terminal', 'file', 'web', 'browser', 'skills', 'todo', 'memory', 'vision', 'apps'];
 
 /** Known toolset names only, de-duplicated, in the given order; an empty result falls back to DEFAULT_TOOLSETS. */
 export function validToolsets(list: unknown): string[] {
@@ -26,7 +33,7 @@ export function hostEngineSettings(config: any, opts: { cwd: string; toolsets: s
   return {
     ...config,
     terminal: { ...(config.terminal ?? {}), backend: 'local', cwd: opts.cwd },
-    platform_toolsets: { ...(config.platform_toolsets ?? {}), api_server: [...opts.toolsets] },
+    platform_toolsets: { ...(config.platform_toolsets ?? {}), api_server: hermesToolsets(opts.toolsets) },
     // Each bot drives a browser of its own, never the person's signed-in Chrome profile.
     browser: { ...(config.browser ?? {}), use_real_profile: false },
   };

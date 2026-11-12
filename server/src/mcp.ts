@@ -8,6 +8,29 @@ import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
 import { askBot, claimToolRow, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
+import { DEFAULT_TOOLSETS, validToolsets } from './engine-runtime.js';
+
+/** Test seam: the two calls that reach Composio. Production never reassigns these. */
+export const mcpDeps = { composioTools, runComposioTool };
+
+/** The bot's allowlist as stored on its row (host mode); the primary bot and legacy rows get the default. */
+function botToolsets(bot: any): Set<string> {
+  let parsed: unknown = null;
+  try { parsed = bot?.toolsets ? JSON.parse(bot.toolsets) : null; } catch { parsed = null; }
+  return new Set(parsed ? validToolsets(parsed) : DEFAULT_TOOLSETS);
+}
+
+/**
+ * Whether this bot may see/call a connected-app (Composio) tool. The 'apps' pseudo toolset gates
+ * all of them; Composio's remote sandbox shells are additionally tied to the bot having 'terminal',
+ * so a bot without a terminal cannot get one by the back door.
+ */
+function appToolAllowed(bot: any, name: string): boolean {
+  const ts = botToolsets(bot);
+  if (!ts.has('apps')) return false;
+  if (/^COMPOSIO_REMOTE_(WORKBENCH|BASH_TOOL)$/i.test(name) && !ts.has('terminal')) return false;
+  return true;
+}
 
 /**
  * The app's tools, served to the Hermes engines over MCP (streamable HTTP, JSON answers only).
@@ -47,8 +70,8 @@ async function listTools(botId: string | null) {
   const own = [...TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters })), ...(env.vmBox ? VM_AGENT_TOOLS : [])];
   const bot = botId ? getBotRow(botId) : null;
   if (!bot) return own;
-  const apps = (await composioTools(bot.user_id))
-    .filter((t: any) => t?.type === 'function' && typeof t.name === 'string' && !toolMap.has(t.name) && !(env.vmBox && VM_AGENT_TOOLS.some(own => own.name.toLowerCase() === t.name.toLowerCase())))
+  const apps = (await mcpDeps.composioTools(bot.user_id))
+    .filter((t: any) => t?.type === 'function' && typeof t.name === 'string' && !toolMap.has(t.name) && appToolAllowed(bot, t.name) && !(env.vmBox && VM_AGENT_TOOLS.some(own => own.name.toLowerCase() === t.name.toLowerCase())))
     .map((t: any) => ({ name: t.name as string, description: String(t.description ?? ''), inputSchema: t.parameters ?? { type: 'object', properties: {} } }));
   return [...own, ...apps];
 }
@@ -76,6 +99,10 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
     }
 
     const pol = policyFor(userId, name, args);
+    if (!appToolAllowed(bot, name)) {
+      noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Not in this bot\'s allowlist' });
+      return text(`${name} is not in your allowlist. Connected apps${/^COMPOSIO_REMOTE_/i.test(name) ? ' and remote shells' : ''} are not available to you; say so rather than retrying.`, true);
+    }
     if (pol.decision === 'block') {
       noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Not allowed' });
       return text(DECLINED);
@@ -84,7 +111,7 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
       const answer = await requestApproval({ userId, botId }, pol, args, rowSeq);
       if (answer !== 'allow') return text(answer === 'deny' ? DECLINED : SKIPPED);
     }
-    const r = await runComposioTool(ctx, name, args);
+    const r = await mcpDeps.runComposioTool(ctx, name, args);
     noteToolOutcome(botId, rowSeq, { status: r.summary === 'failed' ? 'error' : 'done', summary: r.summary === 'failed' ? 'Failed' : undefined });
     return text(r.output);
   } catch (e: any) {

@@ -68,7 +68,7 @@ test('toolset validation: known names only, defaults when empty', () => {
 test('managed home in host mode: local terminal in the bot cwd, bot toolsets, shared keys, no ssh wrappers', () => {
   const r = probe(SETUP + `
     try {
-      const {DEFAULT_TOOLSETS}=await import('./server/src/engine-runtime.ts');
+      const {DEFAULT_TOOLSETS,hermesToolsets}=await import('./server/src/engine-runtime.ts');
       const {writeHome,engineInfo,mcpToken}=await import('./server/src/engine.ts');
       const work=path.join(dir,'work'); fs.mkdirSync(work);
       db.prepare('INSERT INTO bots(id,user_id,name,created_at,updated_at,engine,engine_port,cwd,toolsets) VALUES (?,?,?,?,?,?,?,?,?)').run('a','u','Alpha',0,0,'managed',8650,work,JSON.stringify(['terminal','file','web']));
@@ -98,7 +98,8 @@ test('managed home in host mode: local terminal in the bot cwd, bot toolsets, sh
       const bt=section(b.home,'terminal');
       assert.equal(bt.backend,'local'); assert.equal(bt.cwd,path.join(b.home,'workspace'));
       assert.ok(fs.statSync(path.join(b.home,'workspace')).isDirectory());
-      assert.deepEqual(section(b.home,'platform_toolsets').api_server,DEFAULT_TOOLSETS);
+      assert.deepEqual(section(b.home,'platform_toolsets').api_server,hermesToolsets(DEFAULT_TOOLSETS));
+      assert.ok(!section(b.home,'platform_toolsets').api_server.includes('apps'),'apps is app-side policy, never a Hermes toolset');
 
       globalThis.fetch=async()=>{throw new Error('offline')};
       const info=await engineInfo('a');
