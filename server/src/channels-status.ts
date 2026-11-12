@@ -16,6 +16,8 @@ export interface ChannelsDeps {
   getMe: (token: string) => Promise<string | undefined>;
   /** Whether this user has a Slack connection; may throw. */
   slackConnected: () => Promise<boolean>;
+  /** Whether the server's Telegram poller is running (telegram.ts); defaults to false. */
+  polling?: () => boolean;
 }
 
 /** env + injected lookups → ChannelsStatus. Lookups fail soft. */
@@ -33,7 +35,9 @@ export async function buildChannelsStatus(env: ChannelsEnv, deps: ChannelsDeps):
       configured,
       ...(username ? { username } : {}),
       chatAllowlisted: allow.length > 0,
+      allowlistedCount: allow.length,
       notifications: env.TELEGRAM_NOTIFICATIONS !== '0',
+      polling: (() => { try { return deps.polling?.() ?? false; } catch { return false; } })(),
     },
     slack: { connected: slack },
   };

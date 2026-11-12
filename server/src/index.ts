@@ -22,6 +22,7 @@ import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
 import { mcpApi } from './mcp.js';
 import { initEngines } from './engine.js';
+import { installTelegramHooks, startTelegramPolling } from './telegram.js';
 
 if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
@@ -60,3 +61,8 @@ initProactive(enqueue);
 } else console.log('[zoeybot] scheduler disabled (ZOEYBOT_NO_SCHEDULER=1)');
 startIdleWatcher();
 initEngines();
+// Telegram: inbound chat to Zoey and URGENT routine replies out. One poller per database, like the scheduler.
+if (process.env.ZOEYBOT_NO_SCHEDULER !== '1') {
+  installTelegramHooks();
+  startTelegramPolling();
+}

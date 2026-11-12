@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { requireUser, type AuthVars } from './lib/auth.js';
 import { connectedToolkits } from './composio.js';
 import { buildChannelsStatus, telegramUsernameFetcher, type ChannelsEnv } from './channels-status.js';
+import { isTelegramPolling } from './telegram.js';
 
 export { buildChannelsStatus, telegramUsernameFetcher } from './channels-status.js';
 
@@ -19,6 +20,7 @@ channelsApi.get('/', async (c) => {
   const userId = c.get('user').id;
   const status = await buildChannelsStatus(process.env as ChannelsEnv, {
     getMe,
+    polling: isTelegramPolling,
     // Same per-user Composio check the Apps page uses; one list call, cached nowhere so it reflects a fresh connect.
     slackConnected: async () => (await connectedToolkits(userId)).has('slack'),
   });

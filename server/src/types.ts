@@ -65,6 +65,8 @@ export interface MessageBody {
   streaming?: boolean;
   /** Set when a message came from another bot, a routine or a voice call rather than the user typing. */
   from?: { kind: 'bot' | 'routine' | 'voice'; id: string; name: string };
+  /** The user's message arrived through a messaging channel rather than the web composer. */
+  via?: 'telegram';
   citations?: { url: string; title?: string }[];
 }
 
@@ -221,7 +223,13 @@ export interface EngineInfo {
 /** Where a person can reach their bots: the web app, Telegram, Slack. Never carries secrets. */
 export interface ChannelsStatus {
   web: { connected: true };
-  telegram: { configured: boolean; username?: string; chatAllowlisted: boolean; notifications: boolean };
+  telegram: {
+    configured: boolean; username?: string; chatAllowlisted: boolean; notifications: boolean;
+    /** The server is long-polling getUpdates right now (token set and the poller started). */
+    polling: boolean;
+    /** How many chat ids TELEGRAM_ALLOWED_CHAT_IDS names. */
+    allowlistedCount: number;
+  };
   slack: { connected: boolean };
 }
 

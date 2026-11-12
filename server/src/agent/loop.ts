@@ -35,6 +35,12 @@ export type Trigger =
 /** Pieces of the turn the app's own tools may swap out in tests (no engine, no screen). */
 export const loopDeps = { engineFor, screenForWork };
 
+/**
+ * Hooks other modules push in (telegram.ts imports this file, so it cannot be imported here).
+ * `afterRoutine` runs once a routine-triggered turn ended successfully, with everything the bot wrote.
+ */
+export const turnHooks: { afterRoutine?: (botId: string, routineName: string, text: string) => void } = {};
+
 // ---------- per-bot serial queue ----------
 
 const queues = new Map<string, Promise<void>>();
@@ -612,5 +618,9 @@ async function runTurn(botId: string, trigger: Trigger): Promise<string> {
     }
   }
   if (failure) throw new Error(failure);
-  return spoken.join('\n\n');
+  const written = spoken.join('\n\n');
+  if (trigger.type === 'routine') {
+    try { turnHooks.afterRoutine?.(botId, trigger.name, written); } catch (e) { console.error('[agent] afterRoutine hook failed', e); }
+  }
+  return written;
 }

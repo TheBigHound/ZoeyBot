@@ -8,7 +8,7 @@ test('channels status: nothing configured', async () => {
   const s = await buildChannelsStatus({}, { getMe: async () => { throw new Error('must not be called'); }, slackConnected: async () => false });
   assert.deepEqual(s, {
     web: { connected: true },
-    telegram: { configured: false, chatAllowlisted: false, notifications: true },
+    telegram: { configured: false, chatAllowlisted: false, allowlistedCount: 0, notifications: true, polling: false },
     slack: { connected: false },
   });
 });
@@ -17,10 +17,10 @@ test('channels status: telegram configured, username from getMe, allowlist + not
   let seen = '';
   const s = await buildChannelsStatus(
     { TELEGRAM_BOT_TOKEN: '123:secret', TELEGRAM_ALLOWED_CHAT_IDS: '1, 2', TELEGRAM_NOTIFICATIONS: '0' },
-    { getMe: async (t) => { seen = t; return 'zoey_hq_bot'; }, slackConnected: async () => true },
+    { getMe: async (t) => { seen = t; return 'zoey_hq_bot'; }, slackConnected: async () => true, polling: () => true },
   );
   assert.equal(seen, '123:secret');
-  assert.deepEqual(s.telegram, { configured: true, username: 'zoey_hq_bot', chatAllowlisted: true, notifications: false });
+  assert.deepEqual(s.telegram, { configured: true, username: 'zoey_hq_bot', chatAllowlisted: true, allowlistedCount: 2, notifications: false, polling: true });
   assert.equal(s.slack.connected, true);
   assert.ok(!JSON.stringify(s).includes('secret'), 'token must never appear in the response');
 });
@@ -30,7 +30,7 @@ test('channels status: getMe failure leaves username out; slack failure reads as
     { TELEGRAM_BOT_TOKEN: 'abc', TELEGRAM_ALLOWED_CHAT_IDS: '' },
     { getMe: async () => { throw new Error('timeout'); }, slackConnected: async () => { throw new Error('composio down'); } },
   );
-  assert.deepEqual(s.telegram, { configured: true, chatAllowlisted: false, notifications: true });
+  assert.deepEqual(s.telegram, { configured: true, chatAllowlisted: false, allowlistedCount: 0, notifications: true, polling: false });
   assert.equal(s.slack.connected, false);
 });
 

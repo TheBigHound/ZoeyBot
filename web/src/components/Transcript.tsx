@@ -82,6 +82,7 @@ const Bubble = memo(function Bubble({ row, pos }: { row: Row; pos: string }) {
           <Citations b={b} />
         </div>
         {voice && <span className="bubble__source"><Icon name="mic" size={11} opacity={0.56} />Voice · transcribed locally</span>}
+        {b.via === 'telegram' && <span className="bubble__source">via Telegram</span>}
       </div>
       <span className="bubble__time">{clock(row.createdAt)}</span>
     </div>
