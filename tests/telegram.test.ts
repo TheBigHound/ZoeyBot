@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
  * the network or an engine. Every probe runs in its own process (telegram.ts holds module state).
  */
 
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|ORGO_|HQ_|SESSION_SECRET|DB_PATH|TELEGRAM_)/.test(k)));
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|HQ_|SESSION_SECRET|DB_PATH|TELEGRAM_)/.test(k)));
 
 function probe(code: string, env: Record<string, string> = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-tg-'));
@@ -19,8 +19,8 @@ function probe(code: string, env: Record<string, string> = {}) {
     const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', SETUP + code], {
       cwd: new URL('..', import.meta.url), encoding: 'utf8', timeout: 60000,
       env: {
-        ...cleanEnv(), SESSION_SECRET: 'test-only', DB_PATH: path.join(dir, 'test.db'), HQ_VM: '0', HQ_LOCAL: '0',
-        XAI_API_KEY: 'test', COMPOSIO_API_KEY: 'test', ORGO_API_KEY: 'test',
+        ...cleanEnv(), SESSION_SECRET: 'test-only', DB_PATH: path.join(dir, 'test.db'), HQ_HOST: '1',
+        XAI_API_KEY: 'test', COMPOSIO_API_KEY: 'test',
         TELEGRAM_BOT_TOKEN: '42:secret-token', TELEGRAM_ALLOWED_CHAT_IDS: '111, 222', ...env,
       },
     });

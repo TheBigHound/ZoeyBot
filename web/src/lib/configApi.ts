@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Routine, Skill, Task, Toolkit } from '@shared/types';
+import type { Bot, EngineInfo, LibraryFile, Memory, Routine, Skill, Task, Toolkit } from '@shared/types';
 import { ApiError } from './api';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -24,13 +24,8 @@ export interface BotSettingsBundle {
   memory: { lastConsolidatedAt: number | null; historyChars: number; compactAtChars: number; lastCompaction: { method: string; created_at: number } | null };
 }
 
-export interface LibraryListing { status: 'ok' | 'asleep' | 'error'; path: string; files: LibraryFile[]; error?: string }
-
-export interface ComputerDetails {
-  computer: ComputerState;
-  screens: { botId: string; screenId: string; lastUsedAt: number }[];
-  hibernation: { idleMinutes: number; viewers: number; dryRun: boolean };
-}
+/** One folder of a bot's Library (`<Hermes home>/library` on this Mac). */
+export interface LibraryListing { status: 'ok' | 'error'; path: string; files: LibraryFile[]; error?: string }
 
 export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'effort' | 'mode'>>;
 
@@ -56,15 +51,8 @@ export const configApi = {
   tasks: () => req<{ tasks: Task[] }>('GET', '/tasks'),
   botTasks: (botId: string) => req<{ tasks: Task[] }>('GET', `/bots/${botId}/tasks`),
 
-  files: (botId: string, path = '', wake = false) => req<LibraryListing>('GET', `/bots/${botId}/files?path=${encodeURIComponent(path)}${wake ? '&wake=1' : ''}`),
+  files: (botId: string, path = '') => req<LibraryListing>('GET', `/bots/${botId}/files?path=${encodeURIComponent(path)}`),
   downloadFile: (botId: string, path: string) => req<{ url: string }>('POST', `/bots/${botId}/files/download`, { path }),
-
-  computerDetails: () => req<ComputerDetails>('GET', '/computer/details'),
-  wake: () => req<{ computer: ComputerState }>('POST', '/computer/ensure'),
-  sleep: () => req<{ computer: ComputerState }>('POST', '/computer/suspend'),
-  resetScreen: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/screen/reset`),
-  /** Tells the bot the person has stopped driving its screen. */
-  handback: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/handback`),
 
   engine: (botId: string) => req<{ engine: EngineInfo }>('GET', `/bots/${botId}/engine`),
   /**
@@ -72,10 +60,10 @@ export const configApi = {
    * managed gateway (status 'starting' for a bit); for the primary bot they are stored and `note` says so.
    */
   setEngine: (botId: string, p: EnginePatch) => req<{ engine: EngineInfo; note?: string }>('PATCH', `/bots/${botId}/engine`, p),
-  /** Opens the provider's sign-in flow in a terminal on the bot's screen. */
+  /** Asks for the provider's sign-in; the server answers 409 with the Terminal command to run (Hermes signs in interactively). */
   engineLogin: (botId: string, provider?: string) => req<{ ok: true }>('POST', `/bots/${botId}/engine/login`, provider ? { provider } : {}),
   restartEngine: (botId: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/restart`),
-  /** Stops the private screen the agent runs for itself, so its computer work shows on the screen in the app. */
+  /** Stops the private virtual screen (Hermes "Bot Desktop") the agent may run for its computer-use tool. */
   stopOwnScreen: (botId: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/screen/stop`),
 
   policies: () => req<{ policies: { tool: string; mode: string }[] }>('GET', '/policies'),

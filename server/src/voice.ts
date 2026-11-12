@@ -10,7 +10,6 @@ import { newId } from './lib/ids.js';
 import type { AuthVars } from './lib/auth.js';
 import { appendRow, emitBot, getBotRow, getLive, listRoutines, listTasks, updateRow } from './store.js';
 import { enqueue } from './agent/loop.js';
-import { computerState } from './computer.js';
 import type { ActivityKind, EventBody, MessageBody, RowBody, VoiceCallRecord, VoiceOption } from './types.js';
 import { listMemories } from './engine-memory.js';
 import { voiceMode, localVoiceOptions, synthesizeLocal, transcribeLocal } from './local-voice.js';
@@ -132,8 +131,6 @@ function activitySnapshot(botId: string) {
   else lines.push('Idle: not working on anything right now.');
   if (tasks.length) lines.push(`Open tasks:\n${tasks.map((t) => `- ${t.title} [${t.state === 'needs_input' ? 'needs input' : 'in progress'}]${t.note ? `: ${clip(t.note, 120)}` : ''}`).join('\n')}`);
   if (pending.length) lines.push(`Waiting on the user in chat:\n${pending.map((b: any) => `- ${b.card === 'approval' ? b.title : b.card === 'question' ? b.question : b.card === 'connect' ? `Connect ${b.toolkitName}` : 'A draft to review'}`).join('\n')}`);
-  const comp = computerState(getBotRow(botId).user_id);
-  lines.push(`Computer: ${comp.status === 'running' ? 'awake' : comp.status === 'absent' ? 'not set up yet' : comp.status}.`);
   return lines.join('\n');
 }
 

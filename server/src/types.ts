@@ -127,7 +127,7 @@ export type CardBody =
 
 export interface EventBody {
   type: 'event';
-  event: 'routine-created' | 'routine-updated' | 'routine-run' | 'task-changed' | 'bot-message' | 'conversation-cleared' | 'computer' | 'voice-call';
+  event: 'routine-created' | 'routine-updated' | 'routine-run' | 'task-changed' | 'bot-message' | 'conversation-cleared' | 'voice-call';
   text: string;
   ref?: string;
   /** voice-call only: the call record (set on the end-of-call row). */
@@ -175,17 +175,8 @@ export interface Memory { id: string; botId: string; text: string; createdAt: nu
 
 export interface Skill { id: string; botId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }
 
+/** An entry of a bot's Library (the `library` folder in its Hermes home). */
 export interface LibraryFile { name: string; size: number; modifiedAt: number; isDir: boolean }
-
-export interface ComputerState {
-  status: 'absent' | 'creating' | 'starting' | 'running' | 'suspending' | 'suspended' | 'resuming' | 'error' | 'stopped';
-  orgoId: string | null;
-  error: string | null;
-  /** One screen per bot on the shared computer. width/height are the screen's pixel size. */
-  screens: { botId: string; screenId: string; width?: number; height?: number }[];
-  /** How many bots can have their own screen at once. */
-  maxScreens?: number;
-}
 
 /** A model provider Hermes can use (subscription sign-in or API key). */
 export interface EngineProvider {
@@ -208,7 +199,7 @@ export interface EngineInfo {
   provider: string | null;
   version: string | null;
   providers: EngineProvider[];
-  /** Hermes is running a private screen of its own for this agent, so its computer work is not on the screen the app shows. */
+  /** Hermes is running its private virtual screen ("Bot Desktop") for this agent's computer-use tool. */
   ownScreen: boolean;
   /** The agent's Hermes home directory on the machine that runs it. */
   home: string;
@@ -216,8 +207,8 @@ export interface EngineInfo {
   cwd: string;
   /** Effective toolset allowlist for the agent's API server (Hermes toolset names). */
   toolsets: string[];
-  /** Where the agent's tools execute: this host, the (legacy) VM guest, or an Orgo computer. */
-  execution: 'host' | 'vm' | 'orgo';
+  /** Where the agent's tools execute. Always this Mac; kept for the UI. */
+  execution: 'host';
 }
 
 /** Where a person can reach their bots: the web app, Telegram, Slack. Never carries secrets. */
@@ -260,7 +251,6 @@ export type ServerEvent =
   | { type: 'live'; state: LiveState }
   | { type: 'roster' }
   | { type: 'bot'; bot: Bot }
-  | { type: 'computer'; state: ComputerState }
   | { type: 'routines'; botId: string }
   | { type: 'tasks'; botId: string }
   | { type: 'memories'; botId: string }

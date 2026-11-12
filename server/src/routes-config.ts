@@ -2,28 +2,23 @@ import { Hono } from 'hono';
 import { db, now } from './db.js';
 import './db-config.js';
 import { newId } from './lib/ids.js';
-import { hub } from './lib/hub.js';
 import { requireUser, type AuthVars } from './lib/auth.js';
 import fs from 'node:fs';
+import path from 'node:path';
 import { Readable } from 'node:stream';
-import { env } from './env.js';
 import { emitBot, getBotRow, listRoutines, listTasks } from './store.js';
-import { computerState, readyScreen, resetBotScreen } from './computer.js';
-import { box } from './box.js';
-import { orgo } from './orgo.js';
-import { openTerminal } from './desk.js';
 import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, stopOwnScreen, updateEngineSettings } from './engine.js';
 import { listMemories } from './engine-memory.js';
-import { idleConfig, viewerCount } from './idle.js';
+import { libraryDir, libraryPath } from './agent/tools.js';
 import type { LibraryFile, Skill } from './types.js';
 
 /**
- * Bot settings, skills, library, computer controls and memory maintenance.
+ * Bot settings, skills, library, engine controls and memory maintenance.
  * Mounted next to routes.ts in index.ts; every path here needs a signed-in user.
  */
 export const configApi = new Hono<AuthVars>();
 
-for (const p of ['/bots/*', '/skills/*', '/computer/*']) configApi.use(p, requireUser);
+for (const p of ['/bots/*', '/skills/*']) configApi.use(p, requireUser);
 
 const ownBot = (userId: string, id: string) => {
   const b = getBotRow(id);
@@ -150,30 +145,20 @@ configApi.patch('/bots/:id/engine', async (c) => {
 
 /**
  * Sign in to a model provider (a Claude, ChatGPT or Grok subscription, or an API key). Hermes does
- * the sign-in itself; we open its command in a terminal on the bot's screen, where the user
- * finishes it through the live view.
+ * the sign-in itself, interactively, so it has to run in the person's own Terminal; the app only
+ * says which command. The OAuth code never passes through the app.
  */
 configApi.post('/bots/:id/engine/login', async (c) => {
-  const user = c.get('user');
-  const b = ownBot(user.id, c.req.param('id'));
+  const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   const home = engineHome(b.id);
   if (!home) return c.json({ error: 'This bot has no agent.' }, 409);
-  // The agent's files are on the machine this server runs on; a terminal on another machine cannot reach them.
-  if (!box.local) return c.json({ error: 'Sign-in opens a terminal on the computer. It works once the app runs on that computer.' }, 409);
   const { provider } = await c.req.json<{ provider?: string }>().catch(() => ({} as { provider?: string }));
   if (provider !== undefined && !/^[a-z0-9][a-z0-9._-]{0,40}$/.test(provider)) return c.json({ error: 'bad provider' }, 400);
-  const hermes = `HERMES_HOME=${box.quote(home)} ${box.quote(env.hermesBin)}`;
   // Claude subscriptions sign in with OAuth; without the flag Hermes asks for an API key.
-  const cmd = !provider ? `${hermes} model` : `${hermes} auth add ${provider}${provider === 'anthropic' ? ' --type oauth' : ''}`;
-  try {
-    const s = await readyScreen(user.id, b.id);
-    await openTerminal(s.screenId, cmd, provider ? `Sign in: ${provider}` : 'Choose a model');
-    forgetEngineOptions(b.id);
-    return c.json({ ok: true });
-  } catch (e: any) {
-    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
-  }
+  const cmd = `HERMES_HOME=${JSON.stringify(home)} hermes ${!provider ? 'model' : `auth add ${provider}${provider === 'anthropic' ? ' --type oauth' : ''}`}`;
+  forgetEngineOptions(b.id);
+  return c.json({ error: `Run this in Terminal, then come back: ${cmd}`, command: cmd }, 409);
 });
 
 configApi.post('/bots/:id/engine/restart', async (c) => {
@@ -190,7 +175,7 @@ configApi.post('/bots/:id/engine/restart', async (c) => {
   }
 });
 
-/** Stop the private screen Hermes runs for this agent, so its computer work comes back to the screen shown here. */
+/** Stop the private desktop screen (Hermes "Bot Desktop") this agent may have started for its computer-use tool. */
 configApi.post('/bots/:id/engine/screen/stop', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
@@ -202,17 +187,7 @@ configApi.post('/bots/:id/engine/screen/stop', async (c) => {
   }
 });
 
-/** The user gives the screen back after taking control; the bot is told on its next turn. */
-configApi.post('/bots/:id/handback', (c) => {
-  const b = ownBot(c.get('user').id, c.req.param('id'));
-  if (!b) return c.json({ error: 'not found' }, 404);
-  db.prepare('UPDATE bots SET handback_at=? WHERE id=?').run(now(), b.id);
-  return c.json({ ok: true });
-});
-
-// ---------- library: files under /root/zoeybot/files/<botId> on the bot's computer ----------
-
-const LIB_ROOT = '/root/zoeybot/files';
+// ---------- library: <Hermes home>/library on this Mac ----------
 
 function safeRel(p: string | undefined): string | null {
   const rel = (p ?? '').replace(/^\/+|\/+$/g, '');
@@ -221,85 +196,54 @@ function safeRel(p: string | undefined): string | null {
   return rel;
 }
 
-const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-
-/** Parse `ls -la --time-style=+%s` output. */
-export function parseLs(out: string): LibraryFile[] {
+/** Folders first, then newest first. */
+export function listLibrary(dir: string): LibraryFile[] {
   const files: LibraryFile[] = [];
-  for (const line of out.split('\n')) {
-    const m = line.match(/^([-dlcbps])\S*\s+\d+\s+\S+\s+\S+\s+(\d+)\s+(\d+)\s+(.+)$/);
-    if (!m) continue;
-    let name = m[4];
-    if (m[1] === 'l') name = name.replace(/ -> .*$/, '');
-    if (name === '.' || name === '..') continue;
-    files.push({ name, size: Number(m[2]), modifiedAt: Number(m[3]) * 1000, isDir: m[1] === 'd' });
+  for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+    // Hidden entries and links are left out; a link could point anywhere and the download route would refuse it anyway.
+    if (d.name.startsWith('.') || d.isSymbolicLink()) continue;
+    let st: fs.Stats;
+    try { st = fs.statSync(path.join(dir, d.name)); } catch { continue; }
+    if (!st.isFile() && !st.isDirectory()) continue;
+    files.push({ name: d.name, size: st.size, modifiedAt: st.mtimeMs, isDir: st.isDirectory() });
   }
   return files.sort((a, b) => Number(b.isDir) - Number(a.isDir) || b.modifiedAt - a.modifiedAt);
 }
 
-configApi.get('/bots/:id/files', async (c) => {
-  const user = c.get('user');
-  const b = ownBot(user.id, c.req.param('id'));
+configApi.get('/bots/:id/files', (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   const rel = safeRel(c.req.query('path'));
   if (rel === null) return c.json({ error: 'bad path' }, 400);
+  if (!libraryDir(b.id)) return c.json({ status: 'error', path: rel, files: [], error: 'This bot has no agent.' });
   try {
-    if (!box.local && computerState(user.id).status !== 'running') return c.json({ status: 'asleep', path: rel, files: [] });
-    const dir = `${LIB_ROOT}/${b.id}${rel ? `/${rel}` : ''}`;
-    const r = await box.bash(`mkdir -p ${shq(`${LIB_ROOT}/${b.id}`)} && ls -la --time-style=+%s ${shq(dir)} 2>&1`, 30);
-    if (r.exit_code !== 0) return c.json({ status: 'error', path: rel, files: [], error: (r.output ?? '').slice(0, 300) });
-    return c.json({ status: 'ok', path: rel, files: parseLs(r.output ?? '') });
+    const dir = libraryPath(b.id, rel);
+    if (!dir || !fs.statSync(dir).isDirectory()) return c.json({ status: 'error', path: rel, files: [], error: 'No such folder.' });
+    return c.json({ status: 'ok', path: rel, files: listLibrary(dir) });
   } catch (e: any) {
     return c.json({ status: 'error', path: rel, files: [], error: String(e?.message ?? e).slice(0, 300) });
   }
 });
 
 configApi.post('/bots/:id/files/download', async (c) => {
-  const user = c.get('user');
-  const b = ownBot(user.id, c.req.param('id'));
+  const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const { path } = await c.req.json<{ path: string }>().catch(() => ({ path: '' }));
-  const rel = safeRel(path);
+  const { path: p } = await c.req.json<{ path: string }>().catch(() => ({ path: '' }));
+  const rel = safeRel(p);
   if (!rel) return c.json({ error: 'bad path' }, 400);
-  // On the computer itself the file is on our own disk: serve it directly.
-  if (box.local || env.vmBox) return c.json({ url: `/api/bots/${b.id}/files/raw?path=${encodeURIComponent(rel)}` });
-  try {
-    if (!env.orgoComputerId) return c.json({ error: 'computer unavailable' }, 409);
-    const r: any = await orgo.exportFile(env.orgoComputerId, `${LIB_ROOT}/${b.id}/${rel}`);
-    const url = r?.url ?? r?.file?.url ?? r?.download_url;
-    if (!url) return c.json({ error: 'export returned no link' }, 502);
-    return c.json({ url });
-  } catch (e: any) {
-    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
-  }
+  return c.json({ url: `/api/bots/${b.id}/files/raw?path=${encodeURIComponent(rel)}` });
 });
 
-configApi.get('/bots/:id/files/raw', async (c) => {
+configApi.get('/bots/:id/files/raw', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
-  if (!b || (!box.local && !env.vmBox)) return c.json({ error: 'not found' }, 404);
+  if (!b) return c.json({ error: 'not found' }, 404);
   const rel = safeRel(c.req.query('path'));
   if (!rel) return c.json({ error: 'bad path' }, 400);
-  const root = `${LIB_ROOT}/${b.id}`;
-  if (env.vmBox) {
-    try {
-      const data = await box.readConfinedFile(root, rel);
-      if (!data) return c.json({ error: 'not found' }, 404);
-      return c.body(new Uint8Array(data), 200, {
-        'content-type': 'application/octet-stream',
-        'content-length': String(data.length),
-        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(rel.split('/').pop()!)}`,
-        'x-content-type-options': 'nosniff',
-        'cache-control': 'no-store',
-      });
-    } catch (e: any) {
-      return c.json({ error: String(e?.message ?? e).slice(-300) }, /too large/.test(String(e)) ? 413 : 502);
-    }
-  }
-  let file: string;
+  let file: string | null;
   try {
-    // Follow links before checking, so a link inside the library cannot point outside it.
-    file = fs.realpathSync(`${root}/${rel}`);
-    if (!file.startsWith(fs.realpathSync(root) + '/') || !fs.statSync(file).isFile()) throw new Error('outside');
+    // libraryPath follows links before checking, so a link inside the library cannot point outside it.
+    file = libraryPath(b.id, rel);
+    if (!file || !fs.statSync(file).isFile()) throw new Error('outside');
   } catch {
     return c.json({ error: 'not found' }, 404);
   }
@@ -310,32 +254,7 @@ configApi.get('/bots/:id/files/raw', async (c) => {
       'content-length': String(fs.statSync(file).size),
       'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
       'x-content-type-options': 'nosniff',
+      'cache-control': 'no-store',
     },
   });
-});
-
-// ---------- computer: screens, reset, hibernation ----------
-
-configApi.get('/computer/details', (c) => {
-  const userId = c.get('user').id;
-  const leases = db.prepare('SELECT bot_id, screen_id, last_used_at FROM screens WHERE user_id=? ORDER BY last_used_at DESC').all(userId) as any[];
-  return c.json({
-    computer: computerState(userId),
-    screens: leases.map((l) => ({ botId: l.bot_id, screenId: l.screen_id, lastUsedAt: l.last_used_at })),
-    hibernation: { idleMinutes: idleConfig.idleMin, viewers: viewerCount(userId), dryRun: idleConfig.dryRun },
-  });
-});
-
-/** Give a bot a clean screen: close what is open and bring its browser back to its home screen. Logins stay. */
-configApi.post('/bots/:id/screen/reset', async (c) => {
-  const user = c.get('user');
-  const b = ownBot(user.id, c.req.param('id'));
-  if (!b) return c.json({ error: 'not found' }, 404);
-  try {
-    await resetBotScreen(user.id, b.id);
-    hub.emit(user.id, { type: 'computer', state: computerState(user.id) });
-    return c.json({ ok: true });
-  } catch (e: any) {
-    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
-  }
 });

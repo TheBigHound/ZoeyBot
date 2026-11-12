@@ -9,7 +9,7 @@ import { spawnSync } from 'node:child_process';
  * (env.ts reads its keys at import; telegram.ts holds module state) with an in-memory database.
  */
 
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|ORGO_|HQ_|SESSION_SECRET|DB_PATH|TELEGRAM_|ZOEYBOT_)/.test(k)));
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|HQ_|SESSION_SECRET|DB_PATH|TELEGRAM_|ZOEYBOT_)/.test(k)));
 
 function probe(code: string, env: Record<string, string> = {}) {
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', SETUP + code], {

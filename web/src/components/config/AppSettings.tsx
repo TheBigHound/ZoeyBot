@@ -1,20 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Toolkit } from '@shared/types';
-import { BotAvatarFor } from '../../avatar/BotAvatar';
-import { configApi, type ComputerDetails } from '../../lib/configApi';
-import { relativeShort } from '../../lib/time';
+import { configApi } from '../../lib/configApi';
 import { useConfigUI, type AppSection, type Theme } from '../../configStore';
 import { useStore } from '../../store';
-import { computerStatusText } from '../DetailsPanel';
 import { Icon } from '../Icon';
 import { ToolkitLogo } from '../ToolkitLogo';
 import { Glyph } from './glyphs';
-import { ConfirmButton } from './ui';
 
 const SECTIONS: { id: AppSection; label: string }[] = [
   { id: 'general', label: 'General' },
-  { id: 'computer', label: 'Computer' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'apps', label: 'Connected apps' },
   { id: 'account', label: 'Account' },
@@ -46,7 +41,6 @@ export function AppSettings() {
         <button type="button" className="app-settings__close icon-btn" onClick={close} aria-label="Close settings" title="Close (Esc)"><Icon name="close" opacity={0.8} /></button>
         <div className="app-settings__page">
           {section === 'general' && <GeneralSection />}
-          {section === 'computer' && <ComputerSection />}
           {section === 'permissions' && <PermissionsSection />}
           {section === 'apps' && <AppsSection />}
           {section === 'account' && <AccountSection />}
@@ -94,89 +88,6 @@ function GeneralSection() {
           <ThemeTile value="dark" label="Dark" current={theme} onPick={setTheme} />
         </div>
         <div className="cfg-field__hint">System follows your device’s light or dark setting.</div>
-      </section>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-const screenLabel = (id: string) => (id === 'default' ? 'Main screen' : `Screen ${Number(id.replace('screen-', '')) - 98 || id}`);
-
-function ComputerSection() {
-  const computer = useStore((s) => s.computer);
-  const bots = useStore((s) => s.bots);
-  const [details, setDetails] = useState<ComputerDetails | null>(null);
-  const [busy, setBusy] = useState<'wake' | 'sleep' | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const load = useCallback(() => { configApi.computerDetails().then(setDetails).catch(() => {}); }, []);
-  useEffect(() => { load(); }, [load, computer?.status, computer?.screens.length]);
-
-  const status = computer?.status ?? details?.computer.status;
-  const running = status === 'running';
-  const transitioning = status === 'starting' || status === 'resuming' || status === 'creating' || status === 'suspending';
-  const act = async (kind: 'wake' | 'sleep') => {
-    setBusy(kind); setNote(null);
-    try { kind === 'wake' ? await configApi.wake() : await configApi.sleep(); }
-    catch (e) { setNote((e as Error).message); }
-    finally { setBusy(null); }
-  };
-  const byId = new Map(bots.map((b) => [b.id, b]));
-  // The server says how many screens the computer can hold; 4 until it does.
-  const maxScreens = computer?.maxScreens ?? details?.computer.maxScreens ?? 4;
-
-  return (
-    <>
-      <PageHead title="Computer" sub="Your Bots share one cloud computer. Each Bot works on its own screen." />
-      <section className="cfg-section">
-        <div className="cfg-card">
-          <div className="cfg-row">
-            <span className={`computer-status-dot is-${running ? 'on' : transitioning ? 'busy' : 'off'}`} aria-hidden />
-            <div className="cfg-row__text">
-              <div className="cfg-row__title">Bots’ computer · {computerStatusText(computer ?? null)}</div>
-              <div className="cfg-row__sub">
-                {details ? `Goes to sleep after ${details.hibernation.idleMinutes} idle minutes when nobody is watching. Starts again on its own once a Bot has work.` : 'Checking…'}
-              </div>
-            </div>
-            {running || status === 'suspending' ? (
-              <button type="button" className="cfg-btn cfg-btn--secondary" disabled={!running || !!busy} onClick={() => act('sleep')}>{busy === 'sleep' || status === 'suspending' ? 'Going to sleep…' : 'Sleep'}</button>
-            ) : (
-              <button type="button" className="cfg-btn cfg-btn--primary" disabled={transitioning || !!busy} onClick={() => act('wake')}>{busy === 'wake' || transitioning ? 'Waking…' : 'Wake'}</button>
-            )}
-          </div>
-          {computer?.error && status === 'error' && <div className="cfg-error cfg-error--inset">{computer.error}</div>}
-          {note && <div className="cfg-error cfg-error--inset">{note}</div>}
-        </div>
-      </section>
-
-      <section className="cfg-section">
-        <div className="cfg-section__label">Screens in use{details && maxScreens ? ` · ${details.screens.length} of ${maxScreens}` : ''}</div>
-        <div className="cfg-card">
-          {!details ? <div className="cfg-empty cfg-empty--flat">Loading…</div> : details.screens.length === 0 ? (
-            <div className="cfg-empty cfg-empty--flat">No Bot has used the computer yet.</div>
-          ) : details.screens.map((s) => {
-            const bot = byId.get(s.botId);
-            return (
-              <div key={s.botId} className="cfg-row">
-                {bot ? <BotAvatarFor bot={bot} size={28} /> : <span className="cfg-row__ph" />}
-                <div className="cfg-row__text">
-                  <div className="cfg-row__title">{bot?.name ?? 'Removed Bot'}</div>
-                  <div className="cfg-row__sub">{screenLabel(s.screenId)} · used {relativeShort(s.lastUsedAt) === 'now' ? 'just now' : `${relativeShort(s.lastUsedAt)}${/^\d/.test(relativeShort(s.lastUsedAt)) ? ' ago' : ''}`}</div>
-                </div>
-                <ConfirmButton
-                  className="cfg-btn cfg-btn--secondary"
-                  confirmLabel="Reset screen"
-                  disabled={!running}
-                  title={running ? 'Closes everything open on this screen' : 'Wake the computer first'}
-                  onConfirm={async () => { try { await configApi.resetScreen(s.botId); setNote(null); load(); } catch (e) { setNote((e as Error).message); } }}
-                >
-                  Reset
-                </ConfirmButton>
-              </div>
-            );
-          })}
-        </div>
-        <div className="cfg-field__hint">Reset closes every window on that Bot’s screen, so it starts clean next time.{maxScreens ? ` Up to ${maxScreens} Bots can have a screen at once${details && details.screens.length >= maxScreens ? '; reset one to free it for another Bot' : ''}.` : ''}</div>
       </section>
     </>
   );

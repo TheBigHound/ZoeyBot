@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -8,45 +7,29 @@ function req(name: string): string {
   return v;
 }
 
-/** A secret from NAME, or from the file named by NAME_FILE (so keys need not sit in .env). */
-function secret(name: string): string {
-  const direct = process.env[name];
-  if (direct) return direct;
-  const file = process.env[`${name}_FILE`];
-  if (file) return fs.readFileSync(file, 'utf8').trim();
-  throw new Error(`Missing env ${name} (or ${name}_FILE)`);
-}
-
 const hermesHome = process.env.HERMES_HOME_PRIMARY ?? path.join(os.homedir(), '.hermes');
 
-const vmBox = process.env.HQ_VM === '1';
-/** Host mode: every bot's Hermes gateway runs on this macOS host, one home per bot, no VM and no screens. */
+/**
+ * Host mode (HQ_HOST=1): every bot's Hermes gateway runs on this macOS host, one home per bot. It is
+ * the only supported way to run the product; `scripts/local-services.py` sets the flag. The server
+ * binds to loopback and the email-only sign-in is implied.
+ */
 const hostMode = process.env.HQ_HOST === '1';
-if (vmBox && process.env.HQ_LOCAL === '1') throw new Error('HQ_VM and HQ_LOCAL are mutually exclusive');
-if (hostMode && vmBox) throw new Error('HQ_HOST and HQ_VM are mutually exclusive');
-if (hostMode && process.env.HQ_LOCAL === '1') throw new Error('HQ_HOST and HQ_LOCAL are mutually exclusive');
-/** Modes that run on this machine without cloud credentials. */
-const onThisMachine = vmBox || hostMode;
 
 export const env = {
-  vmBox,
   hostMode,
-  hostname: onThisMachine ? '127.0.0.1' : (process.env.HOST ?? '0.0.0.0'),
-  vmHost: process.env.HQ_VM_HOST ?? '127.0.0.1',
-  vmPort: Number(process.env.HQ_VM_PORT ?? 2222),
-  vmUser: process.env.HQ_VM_USER ?? 'bot',
-  vmKey: process.env.HQ_VM_KEY ?? path.join(os.homedir(), '.ssh/zoeybot-utm'),
-  vmKnownHosts: process.env.HQ_VM_KNOWN_HOSTS ?? new URL('../../data/vm-known-hosts', import.meta.url).pathname,
+  hostname: hostMode ? '127.0.0.1' : (process.env.HOST ?? '0.0.0.0'),
   port: Number(process.env.PORT ?? 8787),
   appUrl: process.env.APP_URL ?? 'http://localhost:5173',
   /** Public URL of this server, used for OAuth callbacks. */
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
-  xaiKey: onThisMachine ? (process.env.XAI_API_KEY ?? '') : req('XAI_API_KEY'),
+  /** Optional: the x_search tool and xAI voice only work when it is set. */
+  xaiKey: process.env.XAI_API_KEY ?? '',
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
-  composioKey: onThisMachine ? (process.env.COMPOSIO_API_KEY ?? '') : req('COMPOSIO_API_KEY'),
-  orgoKey: onThisMachine ? '' : secret('ORGO_API_KEY'),
+  /** Optional: connected apps (Composio) are off without it. */
+  composioKey: process.env.COMPOSIO_API_KEY ?? '',
   sessionSecret: req('SESSION_SECRET'),
-  devLogin: onThisMachine || process.env.DEV_LOGIN === '1',
+  devLogin: hostMode || process.env.DEV_LOGIN === '1',
   dbPath: process.env.DB_PATH ?? new URL('../../data/zoeybot.db', import.meta.url).pathname,
 
   // ---- Hermes engine ----
@@ -66,18 +49,6 @@ export const env = {
   primaryBotName: process.env.PRIMARY_BOT_NAME ?? 'Doug',
   primaryBotLabel: process.env.PRIMARY_BOT_LABEL ?? 'Chief of Staff',
 
-  // ---- the one shared computer ----
-  /** The Orgo computer every bot works on (one screen each). Empty = legacy one-box-per-user mode is not supported. */
-  orgoComputerId: hostMode ? '' : vmBox ? 'utm-local' : (process.env.ORGO_COMPUTER_ID ?? ''),
-  /** This server runs on that computer, so shell commands run locally instead of through Orgo's API. */
-  localBox: process.env.HQ_LOCAL === '1',
-  /**
-   * DevTools URL of a Chrome that already runs on the default screen and belongs to the primary bot
-   * (e.g. http://127.0.0.1:9333). When set, we never start or stop that screen's Chrome ourselves.
-   */
-  primaryCdpUrl: process.env.PRIMARY_CDP_URL ?? '',
-  /** Bots that can each have a screen (Orgo allows four screens on one Linux computer). */
-  maxBots: Number(process.env.MAX_BOTS ?? 4),
   /** Comma-separated emails allowed to sign in; empty = anyone who can reach the app. */
   allowedEmails: (process.env.ALLOWED_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 };

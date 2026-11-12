@@ -11,14 +11,14 @@ import { spawnSync } from 'node:child_process';
  * runs the target's turn exactly as it would with Hermes, minus the model.
  */
 
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|ORGO_|HQ_|SESSION_SECRET|DB_PATH)/.test(k)));
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|HQ_|SESSION_SECRET|DB_PATH)/.test(k)));
 
 function probe(code: string) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hq-ask-'));
   try {
     const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', SETUP + code], {
       cwd: new URL('..', import.meta.url), encoding: 'utf8', timeout: 60000,
-      env: { ...cleanEnv(), SESSION_SECRET: 'test-only', DB_PATH: path.join(dir, 'test.db'), HQ_VM: '0', HQ_LOCAL: '0', XAI_API_KEY: 'test', COMPOSIO_API_KEY: 'test', ORGO_API_KEY: 'test' },
+      env: { ...cleanEnv(), SESSION_SECRET: 'test-only', DB_PATH: path.join(dir, 'test.db'), HQ_HOST: '1', XAI_API_KEY: 'test', COMPOSIO_API_KEY: 'test' },
     });
     assert.equal(r.status, 0, r.stderr + r.stdout);
     return r.stdout;
@@ -37,7 +37,6 @@ const SETUP = `
   const loop = await import('./server/src/agent/loop.ts');
   const { toolMap } = await import('./server/src/agent/tools.ts');
   loop.loopDeps.engineFor = async () => ({ kind: 'managed', url: 'http://engine.test', key: 'k', home: '/nowhere' });
-  loop.loopDeps.screenForWork = async () => {};
   const posted = [];
   const sse = (events) => events.map((e) => 'event: ' + e.type + '\\ndata: ' + JSON.stringify(e) + '\\n\\n').join('') + 'data: [DONE]\\n\\n';
   // The fake engine: each bot answers with replyFor(botId, input); a reply of null means the stream fails.

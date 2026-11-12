@@ -1,8 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { db, now } from '../db.js';
 import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
-import { box } from '../box.js';
 import { env } from '../env.js';
+import { engineHome } from '../engine.js';
 import { appendRow, getBotRow, listRoutines, toRoutine, describeCron } from '../store.js';
 import { executeComposio, innerToolSlugs, isReadOnlySlug, toolkitInfo } from '../composio.js';
 import { scheduleRoutine, unscheduleRoutine } from '../routines.js';
@@ -88,20 +90,50 @@ async function xSearch(a: any): Promise<string> {
   return (sources.length ? `${text}\n\nSources:\n${sources.map((u) => `- ${u}`).join('\n')}` : text).slice(0, 60000);
 }
 
-/** Where each bot's Library lives on the shared computer. */
-export const LIBRARY_ROOT = '/root/zoeybot/files';
+/**
+ * A bot's Library: the `library` folder inside its own Hermes home on this Mac (for the primary bot,
+ * data/primary-hermes/library). Created on first use. Returns null for bots without an agent.
+ */
+export function libraryDir(botId: string): string | null {
+  const home = engineHome(botId);
+  return home ? path.join(home, 'library') : null;
+}
+
+/**
+ * Resolve `rel` inside the bot's Library, or null when it escapes it (`..`, absolute paths, links
+ * pointing outside). Symlinks are followed before the check so a link cannot smuggle a path out.
+ */
+export function libraryPath(botId: string, rel: string): string | null {
+  const root = libraryDir(botId);
+  if (!root) return null;
+  const cleaned = rel.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (/[\0\n\r]/.test(cleaned) || cleaned.split('/').some((s) => s === '..')) return null;
+  fs.mkdirSync(root, { recursive: true });
+  const realRoot = fs.realpathSync(root);
+  const target = path.resolve(realRoot, cleaned);
+  if (target !== realRoot && !target.startsWith(realRoot + path.sep)) return null;
+  // Follow links on the part that exists; what does not exist yet cannot be a link.
+  let probe = target;
+  const missing: string[] = [];
+  while (!fs.existsSync(probe)) { missing.unshift(path.basename(probe)); probe = path.dirname(probe); }
+  const real = path.join(fs.realpathSync(probe), ...missing);
+  if (real !== realRoot && !real.startsWith(realRoot + path.sep)) return null;
+  return real;
+}
 
 export const TOOLS: ToolDef[] = [
   {
     name: 'save_file',
-    description: "Save a finished deliverable (report, notes, CSV, code, markdown) to your Library so the user can open and download it. Saved under /root/zoeybot/files/<your id>/ on your computer. Files you write into that folder yourself show up in the Library too.",
+    description: "Save a finished deliverable (report, notes, CSV, code, markdown) to your Library so the user can open and download it. Saved in the `library` folder of your Hermes home on this Mac. Files you write into that folder yourself show up in the Library too.",
     parameters: obj({ filename: { type: 'string', description: 'e.g. briefing-2026-11-09.md' }, content: { type: 'string' } }, ['filename', 'content']),
     activity: 'drafting_file',
     label: 'Saving a file',
     impl: async (a, ctx) => {
-      const name = String(a.filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'file.txt';
-      const file = `${LIBRARY_ROOT}/${ctx.botId}/${name}`;
-      await box.writeFile(file, String(a.content ?? ''));
+      // One flat folder: only the last path segment counts, and it is reduced to a safe character set.
+      const name = path.basename(String(a.filename ?? '').replace(/\\/g, '/')).replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'file.txt';
+      const file = libraryPath(ctx.botId, name);
+      if (!file) return { output: 'This bot has no Library folder (no agent).' };
+      await fs.promises.writeFile(file, String(a.content ?? ''), { mode: 0o644 });
       return { output: JSON.stringify({ ok: true, path: file }), summary: `Saved ${name}` };
     },
   },

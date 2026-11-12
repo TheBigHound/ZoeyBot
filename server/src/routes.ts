@@ -8,10 +8,8 @@ import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
-import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
-import { orgo } from './orgo.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { dismissAlert, listAlerts } from './alerts.js';
@@ -34,19 +32,14 @@ function hashPick<T>(id: string, list: T[]): T {
 /** Thrown for things the user can fix; the message is shown to them. */
 class UserError extends Error {}
 
-const agentCount = () => (db.prepare("SELECT COUNT(*) n FROM bots WHERE COALESCE(kind,'agent')<>'room' AND COALESCE(hidden,0)=0").get() as any).n as number;
-
 function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; mode?: string; isPrimary?: boolean }) {
-  // Every bot needs a screen of its own on the one shared computer.
-  // Host mode has no screens to run out of; the limit only applies to the shared computer.
-  if (!env.hostMode && agentCount() >= env.maxBots) throw new UserError(`The team is full: the computer has room for ${env.maxBots} bots. Remove one to add another.`);
   const id = newId('bot');
   const shape = SHAPES.includes(b.avatarShape as AvatarShape) ? b.avatarShape : hashPick(id, SHAPES.slice(0, 13));
   const color = COLORS.includes(b.avatarColor as AvatarColor) ? b.avatarColor : hashPick(id, COLORS.filter((c) => c !== 'black'));
   db.prepare(
     'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,is_primary,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
   ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, now(), now());
-  // The first bot is the agent that already runs on the computer; the others get an engine of their own.
+  // The first bot is the primary Hermes agent (data/primary-hermes); the others get a managed gateway of their own.
   if (assignEngine(id) === 'managed') provisionEngine(id);
   hub.emit(userId, { type: 'roster' });
   return getBot(id)!;
@@ -199,14 +192,7 @@ api.patch('/bots/:id', async (c) => {
   for (const [k, col] of Object.entries(cols)) {
     if (p[k] !== undefined) db.prepare(`UPDATE bots SET ${col}=?, updated_at=? WHERE id=?`).run(typeof p[k] === 'boolean' ? (p[k] ? 1 : 0) : p[k], now(), b.id);
   }
-  if (b.kind !== 'room') {
-    if (['name', 'label', 'description'].some((k) => p[k] !== undefined)) syncPersona(b.id);
-    // Its desktop carries its name and colour: dress the screen again, if it has one.
-    const looks = ['name', 'label', 'avatarShape', 'avatarColor'].some((k) => p[k] !== undefined);
-    if (looks && db.prepare('SELECT 1 FROM screens WHERE bot_id=?').get(b.id)) {
-      readyScreen(b.user_id, b.id, { redress: true }).catch((e) => console.warn('[computer] redress failed', e?.message ?? e));
-    }
-  }
+  if (b.kind !== 'room' && ['name', 'label', 'description'].some((k) => p[k] !== undefined)) syncPersona(b.id);
   emitBot(b.id);
   return c.json({ bot: getBot(b.id) });
 });
@@ -219,12 +205,8 @@ api.delete('/bots/:id', async (c) => {
     unscheduleRoutine(r.id);
     await deleteEventTrigger(r.id).catch(() => {});
   }
-  if (b.kind !== 'room') {
-    await removeEngine(b.id).catch((e) => console.warn('[engine] remove failed', e?.message ?? e));
-    await releaseScreen(b.id).catch((e) => console.warn('[computer] release failed', e?.message ?? e));
-    await forgetBotFiles(b.id).catch((e) => console.warn('[computer] cleanup failed', e?.message ?? e));
-  }
-  db.prepare('DELETE FROM screens WHERE bot_id=?').run(b.id);
+  // A managed bot's Library lives inside its Hermes home, so removing the engine removes the files too.
+  if (b.kind !== 'room') await removeEngine(b.id).catch((e) => console.warn('[engine] remove failed', e?.message ?? e));
   db.prepare('DELETE FROM bots WHERE id=?').run(b.id);
   hub.emit(c.get('user').id, { type: 'roster' });
   return c.json({ ok: true });
@@ -383,36 +365,6 @@ api.delete('/memories/:id', (c) => {
   if (!botId || !ownBot(c.get('user').id, botId)) return c.json({ error: 'not found' }, 404);
   deleteMemory(c.req.param('id'));
   return c.json({ ok: true });
-});
-
-// ---------- computer ----------
-
-api.get('/computer', async (c) => c.json({ computer: await refreshComputer(c.get('user').id) }));
-
-api.post('/computer/ensure', (c) => {
-  const userId = c.get('user').id;
-  ensureComputer(userId).catch((e) => console.warn('[computer] ensure failed', e.message));
-  return c.json({ computer: computerState(userId) });
-});
-
-api.post('/computer/suspend', async (c) => {
-  await suspendComputer(c.get('user').id);
-  return c.json({ computer: computerState(c.get('user').id) });
-});
-
-api.get('/bots/:id/screenshot', async (c) => {
-  const user = c.get('user');
-  const b = ownBot(user.id, c.req.param('id'));
-  if (!b) return c.json({ error: 'not found' }, 404);
-  const scr = db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(b.id) as any;
-  if (!env.orgoComputerId || computerState(user.id).status !== 'running' || !scr) return c.body(null, 204);
-  try {
-    const s = await orgo.screenshot(env.orgoComputerId, scr.screen_id);
-    const b64 = s.image.replace(/^data:[^,]+,/, '');
-    return c.body(Buffer.from(b64, 'base64'), 200, { 'Content-Type': s.mime_type ?? 'image/jpeg', 'Cache-Control': 'no-store' });
-  } catch {
-    return c.body(null, 204);
-  }
 });
 
 // ---------- apps (Composio marketplace) ----------

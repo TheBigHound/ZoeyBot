@@ -36,8 +36,8 @@ const routines = [
   { id: 'r3', botId: 'zoey', name: 'Paused one', prompt: '', schedule: '', timezone: 'UTC', enabled: false, nextRunAt: null, lastRunAt: null, description: '' },
 ];
 
-// execution 'vm' keeps the first test on the computer-screen variant; host rendering is covered by tests/engine-tab.test.ts.
-const engine = { botId: 'zoey', profile: 'default', status: 'ready', error: null, model: 'qwen3.5:35b', provider: 'ollama', version: '1', ownScreen: false, providers: [{ id: 'ollama', name: 'Ollama (local)', kind: 'api_key', connected: true, models: ['qwen3.5:35b'] }], execution: 'vm', home: '/Users/x/zoeybot/data/primary-hermes', cwd: '/Users/x', toolsets: ['terminal', 'file'] };
+// Host layout: every bot runs on this Mac; the Engine tab itself is covered by tests/engine-tab.test.ts.
+const engine = { botId: 'zoey', profile: 'default', status: 'ready', error: null, model: 'qwen3.5:35b', provider: 'ollama', version: '1', ownScreen: false, providers: [{ id: 'ollama', name: 'Ollama (local)', kind: 'api_key', connected: true, models: ['qwen3.5:35b'] }], execution: 'host', home: '/Users/x/zoeybot/data/primary-hermes', cwd: '/Users/x', toolsets: ['terminal', 'file'] };
 
 const walk = (n: unknown): string => typeof n === 'string' ? n : Array.isArray(n) ? n.map(walk).join('') : n && typeof n === 'object' && 'children' in (n as object) ? (n as ReactTestInstance).children.map(walk).join('') : '';
 const text = (n: ReactTestInstance | ReactTestRenderer['root']) => walk(n);
@@ -50,7 +50,7 @@ async function mount(channels: ChannelsStatus) {
   api.channels = async () => channels;
   configApi.engine = async () => ({ engine: engine as any });
   configApi.botTasks = async () => ({ tasks: [] });
-  useStore.setState({ bots: [bot as any], selectedBotId: 'zoey', routines: { zoey: routines as any }, computer: { status: 'running', orgoId: null, error: null, screens: [] }, live: { zoey: { botId: 'zoey', isRunning: true, activity: { kind: 'reading_web', detail: 'Gmail', since: Date.now() }, awaiting: null, startedAt: Date.now() } }, detailsOpen: true });
+  useStore.setState({ bots: [bot as any], selectedBotId: 'zoey', routines: { zoey: routines as any }, live: { zoey: { botId: 'zoey', isRunning: true, activity: { kind: 'reading_web', detail: 'Gmail', since: Date.now() }, awaiting: null, startedAt: Date.now() } }, detailsOpen: true });
   const { DetailsPanel } = await import('../web/src/components/DetailsPanel.tsx');
   let root!: ReactTestRenderer;
   await act(async () => { root = create(React.createElement(DetailsPanel), { createNodeMock: () => ({ style: {}, focus() {} }) }); });
@@ -65,7 +65,8 @@ const full: ChannelsStatus = { web: { connected: true }, telegram: { configured:
 test('details panel: title, tab strip, no suggested card or subscription link', async () => {
   const { root, tabs } = await mount(full);
   const all = text(root.root);
-  assert.match(all, /Zoey’s computer/);
+  assert.match(all, /Zoey’s workspace/);
+  assert.doesNotMatch(all, /Zoey’s computer/);
   assert.deepEqual(tabs().map((t) => t.props['data-tab']), ['activity', 'routines', 'channels', 'engine', 'library']);
   assert.match(text(tabs()[1]), /Routines/);
   assert.match(text(tabs()[1]), /2/, 'routine count = enabled routines');
@@ -78,12 +79,15 @@ test('details panel: title, tab strip, no suggested card or subscription link', 
   assert.match(all, /Daily Family Email Digest/);
   assert.match(all, /Ollama \(local\)/);
   assert.match(all, /qwen3\.5:35b/);
-  // No standalone LIVE badge: VM "running" is not a streaming frame; only ComputerScreen's phase badge may say Live.
+  // Host mode: no computer screen card, no pop-out, no "Awake"; the identity line says the agent runs here.
   assert.doesNotMatch(all, /LIVE/);
   assert.equal(root.root.findAll((n) => n.props?.className === 'details__live').length, 0);
-  assert.match(all, /Awake/);
+  assert.equal(root.root.findAll((n) => typeof n.props?.className === 'string' && n.props.className.startsWith('details__screen')).length, 0);
+  assert.doesNotMatch(all, /Awake/);
+  assert.match(all, /On this Mac/);
   assert.match(all, /Reading/);
-  assert.ok(root.root.findAll((n) => n.type === 'button' && n.props['aria-label'] === 'Pop out').length === 1);
+  assert.match(all, /~/, 'the working directory is shown with ~');
+  assert.equal(root.root.findAll((n) => n.type === 'button' && n.props['aria-label'] === 'Pop out').length, 0);
 });
 
 test('details panel: hq:details-tab event switches tabs and the tab is remembered', async () => {

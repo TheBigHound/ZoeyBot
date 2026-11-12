@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { startEvents } from './lib/events';
 import { useStore } from './store';
 import { ChatView } from './components/ChatView';
-import { ComputerViewer } from './components/ComputerViewer';
 import { DetailsPanel } from './components/DetailsPanel';
 import { Sidebar } from './components/Sidebar';
 import { SignIn } from './components/SignIn';
@@ -17,7 +16,6 @@ import { useConfigUI } from './configStore';
 function Shell() {
   const detailsOpen = useStore((s) => s.detailsOpen);
   const modal = useStore((s) => s.modal);
-  const viewerOpen = useStore((s) => s.viewerOpen);
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const hasBot = useStore((s) => !!s.selectedBotId);
   const view = useConfigUI((s) => s.view);
@@ -25,7 +23,6 @@ function Shell() {
   useEffect(() => {
     const st = useStore.getState();
     st.loadBots().catch(console.error);
-    st.loadComputer().catch(console.error);
     const stop = startEvents();
     // OAuth popups post back here; refresh connection-dependent views and the open transcript.
     const onMsg = (e: MessageEvent) => {
@@ -63,7 +60,6 @@ function Shell() {
       {modal === 'group' && <CreateGroupModal />}
       {modal === 'search' && <SearchModal />}
       {modal === 'apps' && <ConnectAppsModal />}
-      {viewerOpen && <ComputerViewer />}
       <ConfigLayer />
     </div>
   );

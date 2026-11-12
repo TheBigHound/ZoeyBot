@@ -142,7 +142,7 @@ test('chat view has a real header row with name, role and the voice pill mount â
     assert.ok(more, 'overflow menu button');
     await act(async () => { more.props.onClick(); });
     const labels = r.findAll((n) => n.type === 'button' && typeof n.props.role === 'string' && n.props.role === 'menuitem').map((n) => f.text(n));
-    for (const l of ['Show details', 'Open computer', 'New conversation', 'Bot settings']) assert.ok(labels.some((x) => x.includes(l)), `${l} in ${JSON.stringify(labels)}`);
+    for (const l of ['Show details', 'New conversation', 'Bot settings']) assert.ok(labels.some((x) => x.includes(l)), `${l} in ${JSON.stringify(labels)}`);
   } finally {
     act(() => root.unmount());
     f.cleanup();

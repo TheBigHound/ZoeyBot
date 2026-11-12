@@ -53,7 +53,7 @@ export async function synthesizeLocal(text: string, codec: 'wav' | 'pcm' = 'wav'
   }
 }
 export function voiceMode(settings: NodeJS.ProcessEnv = process.env): 'local' | 'xai' {
-  return settings.VOICE_PROVIDER === 'local' || settings.HQ_VM === '1' ? 'local' : 'xai';
+  return settings.VOICE_PROVIDER === 'local' || settings.HQ_HOST === '1' ? 'local' : 'xai';
 }
 const sttScript = fileURLToPath(new URL('../src/local-stt.py', import.meta.url));
 let sttRuntime: string[] | undefined;

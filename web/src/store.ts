@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Bot, ComputerState, LiveState, Routine, Row, ServerEvent, User } from '@shared/types';
+import type { Bot, LiveState, Routine, Row, ServerEvent, User } from '@shared/types';
 import { api } from './lib/api';
 import { publishLiveRows } from './lib/liveRows';
 
@@ -17,7 +17,6 @@ interface State {
   selectedBotId: string | null;
   transcripts: Record<string, Transcript>;
   routines: Record<string, Routine[]>;
-  computer: ComputerState | null;
   /** Bumped on every `connections` event so open views can refetch. */
   connectionsVersion: number;
   sseConnected: boolean;
@@ -25,18 +24,12 @@ interface State {
   detailsOpen: boolean;
   sidebarCollapsed: boolean;
   modal: ModalKind;
-  viewerOpen: boolean;
-  /** How the large computer view opens, and the mode it is in while open. */
-  viewerMode: 'watch' | 'control';
-  /** One line shown under the large computer view while the person is driving (e.g. a sign-in to finish). */
-  viewerHint: string | null;
 
   checkAuth(): Promise<void>;
   loadBots(): Promise<void>;
   selectBot(id: string): void;
   loadRows(id: string): Promise<void>;
   loadRoutines(id: string): Promise<void>;
-  loadComputer(): Promise<void>;
   upsertRows(botId: string, generation: number, rows: Row[]): void;
   handleEvent(ev: ServerEvent): void;
   setModal(m: ModalKind): void;
@@ -58,15 +51,11 @@ export const useStore = create<State>((set, get) => ({
   selectedBotId: lsGet(LS_SELECTED),
   transcripts: {},
   routines: {},
-  computer: null,
   connectionsVersion: 0,
   sseConnected: false,
   detailsOpen: lsGet(LS_DETAILS) !== '0',
   sidebarCollapsed: lsGet(LS_SIDEBAR) === '1',
   modal: null,
-  viewerOpen: false,
-  viewerMode: 'watch',
-  viewerHint: null,
 
   async checkAuth() {
     try {
@@ -119,11 +108,6 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ routines: { ...s.routines, [id]: routines } }));
   },
 
-  async loadComputer() {
-    const { computer } = await api.computer();
-    set({ computer });
-  },
-
   upsertRows(botId, generation, rows) {
     set((s) => {
       const prev = s.transcripts[botId];
@@ -171,9 +155,6 @@ export const useStore = create<State>((set, get) => ({
         set((st) => ({ bots: exists ? st.bots.map((b) => (b.id === ev.bot.id ? ev.bot : b)) : [...st.bots, ev.bot] }));
         return;
       }
-      case 'computer':
-        set({ computer: ev.state });
-        return;
       case 'routines':
         if (s.routines[ev.botId] || ev.botId === s.selectedBotId) s.loadRoutines(ev.botId).catch(console.error);
         return;

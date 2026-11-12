@@ -3,21 +3,16 @@ import type { Bot, ChannelsStatus, LiveState, Routine, Row } from '@shared/types
 import { BotAvatarFor } from '../avatar/BotAvatar';
 import { api, openPopup } from '../lib/api';
 import { botVars } from '../lib/colors';
-import { computerStatusText } from '../lib/computer';
 import { activityStatus } from '../lib/phrases';
 import { relativeShort } from '../lib/time';
 import { displayName, sortedRows, useSelectedBot, useStore } from '../store';
 import { Icon } from './Icon';
 import { VoiceSettings } from './VoiceSettings';
-import { ComputerScreen, type ScreenMode } from './ComputerViewer';
 import { EngineSettings, providerName, useEngineInfo } from './EngineSettings';
 import { MembersCard } from './MembersCard';
 import { useConfigUI } from '../configStore';
 import { LibraryTab } from './config/LibraryTab';
 import { BotTasks } from './config/TasksView';
-
-// Other files import this from here; it lives in lib/computer so the viewer can use it too.
-export { computerStatusText };
 
 export type DetailsTab = 'activity' | 'routines' | 'channels' | 'engine' | 'library';
 const TABS: DetailsTab[] = ['activity', 'routines', 'channels', 'engine', 'library'];
@@ -79,7 +74,7 @@ function RoutineRow({ r }: { r: Routine }) {
   );
 }
 
-/** One line of what the bot is doing on its screen right now, or null while idle. */
+/** One line of what the bot is doing right now, or null while idle. */
 function doingNow(live: LiveState | undefined, rows: Row[]): string | null {
   if (!live?.isRunning) return null;
   const status = activityStatus(live, rows);
@@ -95,9 +90,6 @@ const WebGlyph = () => (
 );
 const SlackGlyph = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden><path d="M5.5 2v12M10.5 2v12M2 5.5h12M2 10.5h12" /></svg>
-);
-const PopOutGlyph = () => (
-  <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v8A1.5 1.5 0 0 0 3.5 14h8a1.5 1.5 0 0 0 1.5-1.5V10M9 2h5v5M14 2 7.5 8.5" /></svg>
 );
 
 /** How many channels count as live: the web app always, Telegram once it answers to a username, Slack when connected. */
@@ -211,10 +203,8 @@ export function DetailsPanel() {
 
 function DetailsPanelFor({ bot }: { bot: Bot }) {
   const routines = useStore((s) => s.routines[bot.id]);
-  const computer = useStore((s) => s.computer);
   const live = useStore((s) => s.live[bot.id]);
   const transcript = useStore((s) => s.transcripts[bot.id]);
-  const viewerOpen = useStore((s) => s.viewerOpen);
   const set = useStore((s) => s.set);
   const isRoom = bot.kind === 'room';
   const [tab, setTab] = useRememberedTab();
@@ -226,17 +216,14 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
   const model = engine?.model ?? bot.model;
   const provider = providerName(engine) ?? bot.provider;
   const providerOk = engine ? engine.status === 'ready' && (engine.providers?.find((p) => p.id === engine.provider)?.connected ?? true) : false;
-  const host = engine?.execution === 'host';
-  const running = host ? engine?.status === 'ready' : computer?.status === 'running';
-  const waking = host ? engine?.status === 'starting' : (computer?.status === 'starting' || computer?.status === 'resuming' || computer?.status === 'creating');
-  const stateText = host ? (engine?.status === 'ready' ? 'On this Mac' : engine?.status === 'starting' ? 'Starting…' : 'Agent stopped') : computerStatusText(computer);
+  // Every bot's agent runs on this Mac; the identity line reports the agent, not a remote computer.
+  const running = engine?.status === 'ready';
+  const waking = engine?.status === 'starting';
+  const stateText = engine?.status === 'ready' ? 'On this Mac' : engine?.status === 'starting' ? 'Starting…' : engineCtl.phase === 'loading' ? 'Checking…' : 'Agent stopped';
   const doing = doingNow(live, rows);
   const enabledCount = routines?.filter((r) => r.enabled).length ?? 0;
   const upNext = (routines ?? []).slice(0, 4);
   const effectiveTab: DetailsTab = isRoom && tab === 'engine' ? 'activity' : tab;
-
-  const openComputer = (mode: ScreenMode) => set({ viewerOpen: true, viewerMode: mode, viewerHint: null });
-  const popOut = () => set({ viewerOpen: true, viewerMode: 'watch', viewerHint: null });
 
   const tabLabel: Record<DetailsTab, string> = { activity: 'Activity', routines: 'Routines', channels: 'Channels', engine: 'Engine', library: 'Library' };
   const tabCount: Partial<Record<DetailsTab, number>> = { routines: enabledCount, channels: connectedChannelCount(channels) };
@@ -245,13 +232,8 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
   return (
     <aside className="details" style={botVars(bot.avatarColor)} aria-label="Conversation details">
       <div className="details__top">
-        <span className="details__title" title={isRoom ? displayName(bot) : host ? `${bot.name}’s workspace` : `${bot.name}’s computer`}>{isRoom ? displayName(bot) : host ? `${bot.name}’s workspace` : `${bot.name}’s computer`}</span>
+        <span className="details__title" title={isRoom ? displayName(bot) : `${bot.name}’s workspace`}>{isRoom ? displayName(bot) : `${bot.name}’s workspace`}</span>
         <span className="details__sp" />
-        {!isRoom && !host && (
-          <button type="button" className="icon-btn details__iconbtn" onClick={popOut} aria-label="Pop out" title="Open the large view">
-            <PopOutGlyph />
-          </button>
-        )}
         <button type="button" className="icon-btn details__iconbtn" onClick={() => set({ detailsOpen: false })} aria-label="Close details" title="Close">
           <Icon name="close" opacity={0.92} />
         </button>
@@ -267,17 +249,6 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
         </div>
       ) : (
         <div className="details__fixed">
-          {!host && (
-          <div className={`details__screen${running ? ' is-running' : ''}`}>
-            <ComputerScreen bot={bot} variant="panel" paused={viewerOpen} onExpand={openComputer} />
-            {/* The stream's own phase-accurate "Live" badge (inside ComputerScreen) is the only live indicator; VM status alone is not a live frame. */}
-            {!running && (
-              <span className={`details__screen-state${waking ? ' is-waking' : ''}`} role="status">{stateText}</span>
-            )}
-            {doing && <span className="details__doing" title={doing}><i aria-hidden />{doing}</span>}
-            <button type="button" className="details__openbtn" onClick={() => openComputer('watch')}>Open <Icon name="chev_right" size={10} opacity={0.8} /></button>
-          </div>
-          )}
           <div className="details__ident">
             <span className="details__ident-avatar">
               <BotAvatarFor bot={bot} size={36} />
@@ -288,8 +259,8 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
               <div className="details__ident-sub">
                 <i className={`okdot${running ? '' : waking ? ' is-warn' : ' is-off'}`} aria-hidden />
                 <span>{stateText}</span>
-                {host && doing && <><span className="details__sep">·</span><span>{doing}</span></>}
-                {host && engine?.cwd && <><span className="details__sep">·</span><code className="details__code" title={engine.cwd}>{engine.cwd.replace(/^\/Users\/[^/]+/, '~')}</code></>}
+                {doing && <><span className="details__sep">·</span><span>{doing}</span></>}
+                {engine?.cwd && <><span className="details__sep">·</span><code className="details__code" title={engine.cwd}>{engine.cwd.replace(/^\/Users\/[^/]+/, '~')}</code></>}
                 {model && <><span className="details__sep">·</span><code className="details__code" title={model}>{model}</code></>}
                 {provider && <><span className="details__sep">·</span><span className="details__provider">{provider}</span></>}
               </div>

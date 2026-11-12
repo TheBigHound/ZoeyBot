@@ -16,6 +16,6 @@ export default defineConfig({
       '/api': { target: API, changeOrigin: false, ws: true },
     },
   },
-  // noVNC uses top-level await, so target ES2022+.
+  // Modern browsers only (the app runs on the owner's Mac).
   build: { target: 'es2022', chunkSizeWarningLimit: 1200 },
 });

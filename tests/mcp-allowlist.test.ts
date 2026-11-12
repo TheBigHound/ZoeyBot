@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
  * even when it has 'apps'.
  */
 
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|ORGO_|HQ_|SESSION_SECRET)/.test(k)));
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|HQ_|SESSION_SECRET)/.test(k)));
 function probe(code: string, extra: Record<string, string> = {}) {
   const r = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], {
     cwd: new URL('..', import.meta.url), env: { ...cleanEnv(), HQ_HOST: '1', SESSION_SECRET: 'test-only', DB_PATH: ':memory:', ...extra }, encoding: 'utf8', timeout: 30000,

@@ -1,7 +1,7 @@
 {
   "name": "zoeybot",
   "private": true,
-  "description": "ZoeyBot: a team of Hermes agents, each with its own screen on one Orgo computer, with Composio apps and xAI voice.",
+  "description": "ZoeyBot: a team of Hermes agents, each in its own Hermes home on your Mac, with Composio apps and local voice.",
   "workspaces": [
     "server",
     "web"

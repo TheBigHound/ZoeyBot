@@ -6,10 +6,10 @@
 - Source/orchestrator: `scripts/ZoeyBotLauncher.swift`, `scripts/local-services.py`
 - Private generated state: `data/launchd/` (0700); `config.json` and four `com.thehound.zoeybot.*.plist` files (0600).
 - Private executable helpers: `data/launchd/start.command`, `data/launchd/stop.command` (0700).
-- Private logs: `data/logs/` (0700), `launcher.log`, `{engine,tunnels,web,ollama}.{out,err}.log` (0600).
+- Private logs: `data/logs/` (0700), `launcher.log`, `{engine,web,ollama}.{out,err}.log` (0600).
 - Regression suite: `tests/local-services-test.py` (offline; no real launchd writes).
 
-Open **ZoeyBot.app** to check/start the existing UTM VM and services, then open `http://127.0.0.1:8787`. A native progress window remains until ready; failures show an alert and a Show Logs button. The app then quits; launchd owns the services, not the app process. Quitting the browser does not stop ZoeyBot.
+Open **ZoeyBot.app** to check/start the services, then open `http://127.0.0.1:8787`. A native progress window remains until ready; failures show an alert and a Show Logs button. The app then quits; launchd owns the services, not the app process. Quitting the browser does not stop ZoeyBot.
 
 ```sh
 cd /Users/thehound/zoeybot
@@ -27,7 +27,7 @@ cd /Users/thehound/zoeybot
 
 Plists live in the project, **not** `~/Library/LaunchAgents`, system LaunchDaemons, or login items. Installation only generates files and compiles/ad-hoc signs the native app. The explicit `start` action bootstraps jobs into `gui/<uid>`. `RunAtLoad` applies to that explicit bootstrap, not a future login. `KeepAlive` restarts a loaded job if it exits; `bootout` removes it. Start ZoeyBot explicitly again after login/reboot. Nothing registers or creates a VM, modifies VM shares, enrolls SSH host keys, installs models, or changes the user's live Hermes.
 
-The fixed existing VM is `A1CE5F16-4C0F-42F6-BD61-742708F09212`. Startup opens the installed UTM.app in the background, uses `utmctl status` and, only if stopped/suspended/paused, `utmctl start --hide UUID`. Guest identity must match `zoeybot`, `bot`, `/home/bot` through pinned dedicated-key SSH. The launcher does not add host-folder sharing.
+There is no VM any more: the launcher starts the three launchd jobs (`ollama`, `web`, `engine`) and nothing else.
 
 ## Owned jobs and process handles
 
@@ -36,7 +36,6 @@ Use `gui/$(id -u)/<label>` as the persistent process handle, **not** a remembere
 | Label | Listener(s) | Process | Working directory |
 |---|---|---|---|
 | `com.thehound.zoeybot.engine` | 127.0.0.1:8642 | private `runtime-hermes gateway run --no-supervise` | project root |
-| `com.thehound.zoeybot.tunnels` | 127.0.0.1:6099–6102,9299–9302 | foreground dedicated SSH tunnel | project root |
 | `com.thehound.zoeybot.web` | 127.0.0.1:8787 | installed absolute Node binary, `dist/index.js` | `server/` |
 | `com.thehound.zoeybot.ollama` | 127.0.0.1:11434 | installed Ollama, `serve` | project root |
 
@@ -44,11 +43,11 @@ The Ollama job is optional: the existing healthy Ollama.app listener is normally
 
 All job commands begin `/usr/bin/env -i`. The engine receives only explicit private-home, lock, browser-harness, HOME, PATH, LANG, USER, and private TMPDIR settings. No live Hermes conversation/profile or inherited cloud keys are passed through. The dashboard reads `.env`, then optional `.env.local`, using Node's env-file flags; credentials are not copied into plist files or commands. Node, Ollama TTS, FFmpeg, and the Hermes runtime-discovery executable for local Whisper are pinned to absolute paths captured at installation. Reinstall after moving/updating those executable paths; shell-only PATH entries otherwise disappear in launchd and can silently disable dictation or PCM speech.
 
-Startup order is Ollama → SSH tunnels → web → private engine. The engine discovers the web server's authenticated HQ MCP tools at boot; starting it before web parks that discovery and leaves the bot without browser/computer/app tools even if both health endpoints later answer. The native bundle includes `NSAppleEventsUsageDescription` for UTM Automation; do not remove it when rebuilding. If macOS asks for permission to control UTM, the user must approve it explicitly.
+Startup order is Ollama → web → private engine. The engine discovers the web server's authenticated HQ MCP tools at boot; starting it before web parks that discovery and leaves the bot without browser/computer/app tools even if both health endpoints later answer.
 
 ## Initial migration reference (completed; do not repeat on a healthy setup)
 
-The initial manual-process migration has been exercised through the actual installed native app. Verification returned `ready: true`, `managed: true`; reopening the app preserved all listener PIDs. Owned stop/start was exercised without stopping the VM or existing Ollama. Real Zoey turns called the guest terminal, browser tabs, and screenshot tool and described the returned image. `node tests/local-app-live-smoke.mjs --voice` also verified real 24kHz PCM synthesis followed by local Whisper transcription through the running launchd dashboard. These checks do not claim physical microphone capture or speaker audibility.
+The initial manual-process migration has been exercised through the actual installed native app. Verification returned `ready: true`, `managed: true`; reopening the app preserved all listener PIDs. Owned stop/start was exercised without stopping the existing Ollama. Real Zoey turns called the terminal and browser tools on the host. `node tests/local-app-live-smoke.mjs --voice` also verified real 24kHz PCM synthesis followed by local Whisper transcription through the running launchd dashboard. These checks do not claim physical microphone capture or speaker audibility.
 
 The steps below document the original transition and gates for a future equivalent migration, not instructions to kill today's managed services. Discover current ownership afresh. The active installation now uses the stable launchd labels above rather than the retired tracked-process handles.
 
@@ -65,7 +64,7 @@ The steps below document the original transition and gates for a future equivale
 
    `preflight` checks files, credential permissions, plist consistency and the GUI launchd domain, without reading credential contents or changing services. It checks build existence, not source freshness; the final `npm run build` above is mandatory.
 
-2. For a future manual-to-launchd transition, use the owning session's tracked-process tool to stop only its confirmed **dashboard**, **private engine**, and **tunnels**. First run `process_manage(action="list")` and confirm commands, PIDs, owner and working directory. Original handles `proc_591fd8209523`, `proc_dc85e1834142`, and `proc_60a8fe5025e1` were deliberately stopped during the completed migration; they are historical, not current stop targets. Leave any independently running Ollama.app listener alone.
+2. For a future manual-to-launchd transition, use the owning session's tracked-process tool to stop only its confirmed **dashboard** and **private engine**. First run `process_manage(action="list")` and confirm commands, PIDs, owner and working directory. Original handles `proc_591fd8209523`, `proc_dc85e1834142`, and `proc_60a8fe5025e1` were deliberately stopped during the completed migration; they are historical, not current stop targets. Leave any independently running Ollama.app listener alone.
 
    Do not run broad `pkill`, kill by port, stop the user's live Hermes, or unload unrelated jobs. The initial gateway may belong to an earlier parent-owned session and not appear in a child-scoped list; resolve that in the owning parent rather than guessing a replacement PID.
 
@@ -89,7 +88,6 @@ The steps below document the original transition and gates for a future equivale
    cd /Users/thehound/zoeybot
    /usr/bin/python3 scripts/local-services.py status --check --require-managed
    /bin/launchctl print "gui/$(id -u)/com.thehound.zoeybot.engine"
-   /bin/launchctl print "gui/$(id -u)/com.thehound.zoeybot.tunnels"
    /bin/launchctl print "gui/$(id -u)/com.thehound.zoeybot.web"
    /usr/bin/curl --fail --silent --show-error http://127.0.0.1:8642/health
    /usr/bin/curl --fail --silent --show-error http://127.0.0.1:8787/api/health
@@ -101,8 +99,6 @@ The steps below document the original transition and gates for a future equivale
 
    ```sh
    node tests/local-app-live-smoke.mjs --chat
-   # Guest desktop smoke creates/deletes one temporary second screen:
-   node --env-file=.env --import tsx tests/local-utm-live-smoke.mjs
    /usr/bin/open '/Users/thehound/Applications/ZoeyBot.app'
    /usr/bin/python3 scripts/local-services.py status --check --require-managed
    ```
@@ -116,7 +112,6 @@ The steps below document the original transition and gates for a future equivale
 - Identifies listeners by process command, working directory, the exact dedicated SSH key/pin configuration, and expected forward set. Unknown listeners or non-loopback binds cause a clear failure, even if the URL returns HTTP200.
 - Plans all components before VM/launchd changes. Healthy recognized external listeners are reused; unhealthy or incomplete external components fail closed instead of being replaced. Existing owned-but-not-ready jobs are waited on, not kicked/restarted blindly.
 - Pins SSH host checking and verifies actual guest identity; key mismatch fails immediately. VM/SSH waits are bounded to approximately180 seconds each; service waits approximately120 seconds each plus individual bounded probes. A cold start can take several minutes.
-- Tunnels require all eight forwarding listeners from one dedicated SSH process, actual primary CDP browser identity, and a valid WebSocket upgrade plus real `RFB 003.*` greeting on6099. Secondary guest screen targets need not be up before their bots exist.
 - Engine health requires `status=ok`, `platform=hermes-agent` on8642. Dashboard requires `ok=true`, `engine=hermes` on8787 **and** built HTML/script delivery at `/`. Ollama requires a valid local model catalog response.
 - Start/stop/install share a nonblocking exclusive file lock; a simultaneous lifecycle operation gets a clear retry-later error. Newly started jobs are rolled back in reverse order on downstream startup failure; preexisting jobs/external processes and the VM are not stopped as rollback. Inspect logs if rollback itself fails.
 - Stop verifies the target job is actually unloaded before reporting success. VM shutdown, when explicitly requested, is verified separately. Job removal is not a substitute for the listener/process checks in the parent acceptance steps.

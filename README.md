@@ -119,14 +119,14 @@ server/src/         API, Hermes adapter (agent/loop.ts), engines (engine.ts), MC
 web/src/            chat, bot settings, app connections, voice
 scripts/            launchd lifecycle and macOS launcher, Hermes config helper, sign-in link
 tests/              node:test suites, launchd tests, live smokes
-docs/               architecture and local-stack notes; the Orgo and xAI/Composio guides are historical
+docs/               architecture and local-stack notes; the xAI/Composio guide is historical
 ```
 
 ## Status and limits
 
 - Experimental, no security audit. Bots run as your user on this Mac, limited only by their toolset allowlist and `cwd`.
 - Approval cards cover Composio write actions. What a bot does through its terminal or browser is not gated.
-- The Orgo/UTM screen-per-bot code paths still exist behind `HQ_LOCAL`/`HQ_VM` but are not the supported mode.
+- Host mode (`HQ_HOST=1`) is the only mode; the former Orgo/UTM screen-per-bot code was removed (`docs/cleanup-inventory.md`).
 
 ## License and credits
 

@@ -18,18 +18,14 @@ const PROBE=`
 function prompt(extra:Record<string,string>){
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'hq-prompt-'));
  try {
-  const r=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',PROBE],{cwd:process.cwd(),encoding:'utf8',env:{...process.env,HQ_VM:'1',HQ_LOCAL:'0',HQ_HOST:'0',COMPOSIO_API_KEY:'',SESSION_SECRET:'prompt-test-only',DB_PATH:path.join(dir,'test.db'),...extra}});
+  const r=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',PROBE],{cwd:process.cwd(),encoding:'utf8',env:{...process.env,HQ_HOST:'1',COMPOSIO_API_KEY:'',SESSION_SECRET:'prompt-test-only',DB_PATH:path.join(dir,'test.db'),...extra}});
   assert.equal(r.status,0,r.stderr);
   return r.stdout;
  } finally {fs.rmSync(dir,{recursive:true,force:true});}
 }
 
-test('local VM prompt leads with actual-tool execution policy, not app persona',()=>{
+test('prompt carries the local voice notes and the ask_bot contract',()=>{
   const out=prompt({});
-  assert(out.startsWith('# Execution rules for this local VM'), 'Local execution policy must precede app-specific instructions');
-  assert.match(out,/must issue a real tool call before reporting results/);
-  assert.match(out,/never the Mac host/);
-  assert.match(out,/own screen on a Linux computer/);
   assert.match(out,/Enable local voice/);
   assert.match(out,/phonon\/Zoey/);
   assert.match(out,/cannot enable it from chat or verify browser playback/);
@@ -41,13 +37,15 @@ test('local VM prompt leads with actual-tool execution policy, not app persona',
   assert.match(out,/Do not poll/);
 });
 
-test('host mode prompt leads with the Mac execution rules and drops the shared screen',()=>{
-  const out=prompt({HQ_HOST:'1',HQ_VM:'0'});
+test('prompt leads with the Mac execution rules and has no shared screen or VM text',()=>{
+  const out=prompt({});
   assert(out.startsWith("# Execution rules\nYour terminal, file and browser tools run on the owner's Mac, in your working directory."), out.slice(0,200));
   assert.match(out,/never invent command output/);
   assert.match(out,/never modify another bot's home/);
   assert.match(out,/## Your computer\nYou work on the owner's Mac from your own working directory and Hermes home; there is no separate screen to watch\./);
   assert.doesNotMatch(out,/local VM/);
   assert.doesNotMatch(out,/own screen on a Linux computer/);
-  assert.equal(out, prompt({HQ_HOST:'1',HQ_VM:'0'}), 'the prompt must not depend on the clock');
+  assert.doesNotMatch(out,/\/root\/zoeybot/);
+  assert.match(out,/`library` folder of your Hermes home/);
+  assert.equal(out, prompt({}), 'the prompt must not depend on the clock');
 });

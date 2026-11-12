@@ -4,7 +4,6 @@ import { hub } from '../lib/hub.js';
 import { appendRow, emitBot, getBotRow, getLive, getRow, setLive, updateRow } from '../store.js';
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
-import { screenForWork } from '../computer.js';
 import { engineFor } from '../engine.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
@@ -33,7 +32,7 @@ export type Trigger =
   | { type: 'system'; text: string };
 
 /** Pieces of the turn the app's own tools may swap out in tests (no engine, no screen). */
-export const loopDeps = { engineFor, screenForWork };
+export const loopDeps = { engineFor };
 
 /**
  * Hooks other modules push in (telegram.ts imports this file, so it cannot be imported here).
@@ -464,16 +463,10 @@ async function runTurn(botId: string, trigger: Trigger): Promise<string> {
   let failure: string | null = null;
 
   try {
-    // The screen first: the engine's browser and computer tools point at it.
-    await loopDeps.screenForWork(userId, botId).catch((e) => console.warn(`[computer] screen not ready for ${botId}: ${e?.message ?? e}`));
     const engine = await loopDeps.engineFor(botId);
     if (ctrl.signal.aborted) throw new Error('interrupted');
 
-    let input = triggerText(trigger);
-    if (bot.handback_at) {
-      input = `[Note: the user took control of your screen for a while and has just handed it back. Look at the screen before you rely on what was there.]\n\n${input}`;
-      db.prepare('UPDATE bots SET handback_at=NULL WHERE id=?').run(botId);
-    }
+    const input = triggerText(trigger);
 
     const res = await fetch(`${engine.url}/v1/responses`, {
       method: 'POST',

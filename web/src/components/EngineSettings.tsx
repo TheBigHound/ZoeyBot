@@ -7,7 +7,7 @@ import { Icon } from './Icon';
 
 const KIND: Record<EngineProvider['kind'], string> = { subscription: 'Subscription', api_key: 'API key' };
 const STATUS: Record<EngineInfo['status'], string> = { ready: 'ready', starting: 'starting', stopped: 'stopped', error: 'error' };
-const EXECUTION: Record<EngineInfo['execution'], string> = { host: 'Mac host', vm: 'Bot computer', orgo: 'Orgo computer' };
+const EXECUTION: Record<EngineInfo['execution'], string> = { host: 'Mac host' };
 
 /** Hermes toolset names the server accepts, with the labels the chips show. `apps` is the app-side Composio pseudo toolset. */
 export const TOOLSETS: { id: string; label: string; title?: string }[] = [
@@ -98,14 +98,11 @@ export function useEngineInfo(bot: Bot): EngineController {
  * down, the section says so and the rest of the panel is unaffected.
  */
 export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }) {
-  const viewerOpen = useStore((s) => s.viewerOpen);
-  const set = useStore((s) => s.set);
   const { engine, phase, load, dirty } = ctl;
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
   const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | 'cwd' | 'tools' | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [signingIn, setSigningIn] = useState(false);
   // Hermes home group: working-dir draft, its inline error, and the server's note (primary home is managed outside the app).
   const [cwd, setCwd] = useState('');
   const [cwdError, setCwdError] = useState<string | null>(null);
@@ -121,20 +118,12 @@ export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }
   const srvCwd = engine?.cwd ?? '';
   useEffect(() => { if (!dirty.current) { setProvider(srvProvider); setModel(srvModel); } }, [srvProvider, srvModel, dirty]);
   useEffect(() => { setCwd(srvCwd); }, [srvCwd]);
-  useEffect(() => { setNote(null); setSigningIn(false); setCwdError(null); setServerNote(null); setPendingToolsets(null); setToolsError(null); }, [botId]);
+  useEffect(() => { setNote(null); setCwdError(null); setServerNote(null); setPendingToolsets(null); setToolsError(null); }, [botId]);
 
   const apply = useCallback((e: EngineInfo, keepDraft = false) => {
     ctl.apply(e, keepDraft);
     if (!keepDraft || !dirty.current) { setProvider(e.provider ?? ''); setModel(e.model ?? ''); }
   }, [ctl, dirty]);
-
-  // Signing in happens on the bot's computer. Check while that view is open, and once more when it closes.
-  useEffect(() => {
-    if (!signingIn) return;
-    if (!viewerOpen) { setSigningIn(false); load(true); return; }
-    const t = setInterval(() => load(true), 5000);
-    return () => clearInterval(t);
-  }, [signingIn, viewerOpen, load]);
 
   if (phase !== 'ok' || !engine) {
     return (
@@ -176,15 +165,12 @@ export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }
     finally { setBusy(null); }
   };
 
+  // Hermes signs in interactively in the person's own Terminal; the server answers with the command to run.
   const signIn = async () => {
     if (busy) return;
     setBusy('signin'); setNote(null);
-    try {
-      await configApi.engineLogin(botId, signInTo?.id);
-      // The sign-in runs in a terminal on the bot's screen, so take the person there with the mouse and keyboard.
-      set({ viewerOpen: true, viewerMode: 'control', viewerHint: `Finish signing in on ${bot.name}’s computer, then hand back.` });
-      setSigningIn(true);
-    } catch (e) { setNote(`Couldn’t start sign-in: ${(e as Error).message || 'the engine did not answer'}`); }
+    try { await configApi.engineLogin(botId, signInTo?.id); load(true); }
+    catch (e) { setNote((e as Error).message || 'The engine did not answer.'); }
     finally { setBusy(null); }
   };
 
@@ -200,7 +186,7 @@ export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }
     if (busy) return;
     setBusy('screen'); setNote(null);
     try { const r = await configApi.stopOwnScreen(botId); apply(r.engine, true); }
-    catch (e) { setNote(`Couldn’t switch screens: ${(e as Error).message || 'the engine did not answer'}`); }
+    catch (e) { setNote(`Couldn’t stop the screen: ${(e as Error).message || 'the engine did not answer'}`); }
     finally { setBusy(null); }
   };
 
@@ -268,8 +254,8 @@ export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }
       )}
       {engine.ownScreen && (
         <div className="engine__notice">
-          <span>{bot.name} also has a private screen of its own switched on. Desktop work it does there (clicking around apps) will not show on the screen here.</span>
-          <button type="button" className="link-btn link-btn--small" onClick={useThisScreen} disabled={busy === 'screen'}>{busy === 'screen' ? 'Switching…' : 'Use this screen'}</button>
+          <span>{bot.name} has Hermes’ private virtual screen switched on for its computer-use tool.</span>
+          <button type="button" className="link-btn link-btn--small" onClick={useThisScreen} disabled={busy === 'screen'}>{busy === 'screen' ? 'Stopping…' : 'Stop that screen'}</button>
         </div>
       )}
       {note && <div className="voice-error" role="alert">{note}</div>}

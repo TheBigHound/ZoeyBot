@@ -35,7 +35,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate {
         let label = NSTextField(labelWithString: "Starting ZoeyBot…")
         label.font = .systemFont(ofSize: 17, weight: .semibold)
         label.frame = NSRect(x: 74, y: 71, width: 310, height: 27)
-        let detail = NSTextField(wrappingLabelWithString: "Checking the local VM and services.\nYour browser opens when everything is ready.")
+        let detail = NSTextField(wrappingLabelWithString: "Checking the local services.\nYour browser opens when everything is ready.")
         detail.frame = NSRect(x: 74, y: 22, width: 320, height: 44)
         detail.textColor = .secondaryLabelColor
         let spinner = NSProgressIndicator(frame: NSRect(x: 25, y: 68, width: 28, height: 28))

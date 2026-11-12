@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|ORGO_|HQ_|HERMES_|ENGINES_DIR|DB_PATH|SESSION_SECRET)/.test(k)));
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(XAI_|COMPOSIO_|HQ_|HERMES_|ENGINES_DIR|DB_PATH|SESSION_SECRET)/.test(k)));
 function probe(code: string, extra: Record<string, string> = {}) {
   return spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], {
     cwd: new URL('..', import.meta.url), encoding: 'utf8', timeout: 20000,
@@ -27,25 +27,22 @@ const SETUP = `
   const section=(home,k)=>{const c=calls(home).filter(c=>c[3]===k).pop(); return c?JSON.parse(c[4]):undefined;};
 `;
 
-test('host mode env: no VM, no screens, no cloud credentials required', () => {
+test('host mode env: loopback, dev login, no cloud credentials required, no VM/Orgo fields', () => {
   const r = probe(`const {env}=await import('./server/src/env.ts'); console.log(JSON.stringify(env));`);
   assert.equal(r.status, 0, r.stderr);
   const e = JSON.parse(r.stdout);
   assert.equal(e.hostMode, true);
-  assert.equal(e.vmBox, false);
-  assert.equal(e.localBox, false);
-  assert.equal(e.orgoComputerId, '');
   assert.equal(e.hostname, '127.0.0.1');
   assert.equal(e.devLogin, true);
   assert.equal(e.xaiKey, '');
   assert.equal(e.composioKey, '');
-  assert.equal(e.orgoKey, '');
+  for (const gone of ['vmBox', 'localBox', 'orgoComputerId', 'orgoKey', 'vmHost', 'vmKey', 'vmKnownHosts', 'primaryCdpUrl', 'maxBots']) assert.ok(!(gone in e), `${gone} removed`);
 });
 
-test('HQ_HOST and HQ_VM are mutually exclusive', () => {
-  const r = probe(`await import('./server/src/env.ts');`, { HQ_VM: '1' });
-  assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /HQ_HOST and HQ_VM/);
+test('HQ_VM / HQ_LOCAL are ignored: the only mode is the host', () => {
+  const r = probe(`const {env}=await import('./server/src/env.ts'); console.log(JSON.stringify({host:env.hostMode}));`, { HQ_VM: '1', HQ_LOCAL: '1' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { host: true });
 });
 
 test('toolset validation: known names only, defaults when empty', () => {
@@ -163,20 +160,6 @@ test('engine settings API accepts cwd and toolsets and rejects bad values with 4
       const row=db.prepare('SELECT cwd,toolsets,model,provider FROM bots WHERE id=?').get('p');
       assert.deepEqual(row,{cwd:work,toolsets:JSON.stringify(['terminal','file']),model:'m1',provider:'ollama'});
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
-  `);
-  assert.equal(r.status, 0, r.stderr);
-});
-
-test('screenForWork is a no-op in host mode', () => {
-  const r = probe(`
-    import assert from 'node:assert/strict';
-    const {db}=await import('./server/src/db.ts');
-    db.prepare('INSERT INTO users(id,email,name,created_at) VALUES (?,?,?,?)').run('u','test@localhost','Test',0);
-    db.prepare('INSERT INTO bots(id,user_id,name,engine,created_at,updated_at) VALUES (?,?,?,?,?,?)').run('a','u','Test','primary',0,0);
-    globalThis.fetch=async()=>{throw new Error('must not touch any screen or CDP')};
-    const {screenForWork}=await import('./server/src/computer.ts');
-    await screenForWork('u','a');
-    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM screens').get().n,0);
   `);
   assert.equal(r.status, 0, r.stderr);
 });

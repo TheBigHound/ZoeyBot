@@ -4,8 +4,7 @@ import assert from 'node:assert/strict';
 // Run the real routes and SDK serializer with an in-memory DB and no external requests.
 test('Google callback proxies as the stored provisional connection owner before signing in an existing user', async (t) => {
   const settings = {
-    HQ_VM: '1',
-    HQ_LOCAL: '0',
+    HQ_HOST: '1',
     SESSION_SECRET: 'google-auth-test-only',
     COMPOSIO_API_KEY: 'google-auth-test-only-not-a-real-key',
     DB_PATH: ':memory:',

@@ -3,11 +3,8 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Server } from 'node:http';
 import { env } from './env.js';
-import { isLocalRequest } from './vm.js';
 import { api } from './routes.js';
-import { attachVncRelay } from './vnc.js';
 import { initRoutines } from './routines.js';
 import { initTriggers } from './triggers.js';
 import { initProactive } from './proactive.js';
@@ -17,25 +14,18 @@ import { checkinsApi } from './routes-proactive.js';
 import { roomsApi } from './routes-rooms.js';
 import { channelsApi } from './routes-channels.js';
 import { enqueue, expireStaleApprovals } from './agent/loop.js';
-import { desSelfTest } from './lib/des.js';
 import { configApi } from './routes-config.js';
-import { startIdleWatcher } from './idle.js';
 import { mcpApi } from './mcp.js';
 import { initEngines } from './engine.js';
 import { startTelegramPolling } from './telegram.js';
 import { installAlertHooks } from './alerts.js';
 
-if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
 initRooms();
 // Approvals wait in memory; whatever was still open when the last process stopped can no longer be answered.
 expireStaleApprovals();
 
 const app = new Hono();
-app.use('*', async (c, next) => {
-  if (env.vmBox && !isLocalRequest(c.req.header('host'), c.req.header('origin'))) return c.json({ error: 'Local requests only' }, 403);
-  return next();
-});
 app.get('/api/health', (c) => c.json({ ok: true, engine: 'hermes' }));
 // The app's tools for the agent engines (MCP).
 app.route('/mcp', mcpApi);
@@ -52,15 +42,13 @@ if (fs.existsSync(webDist)) {
   app.get('*', (c) => c.html(fs.readFileSync(path.join(webDist, 'index.html'), 'utf8')));
 }
 
-const server = serve({ fetch: app.fetch, port: env.port, hostname: env.hostname }, (info) => console.log(`[zoeybot] server on http://localhost:${info.port}`));
-attachVncRelay(server as unknown as Server);
+serve({ fetch: app.fetch, port: env.port, hostname: env.hostname }, (info) => console.log(`[zoeybot] server on http://localhost:${info.port}`));
 // ZOEYBOT_NO_SCHEDULER=1 for extra dev/test servers sharing a database copy, so routines and triggers don't fire twice.
 if (process.env.ZOEYBOT_NO_SCHEDULER !== '1') {
   initRoutines(enqueue);
   void initTriggers(enqueue);
 initProactive(enqueue);
 } else console.log('[zoeybot] scheduler disabled (ZOEYBOT_NO_SCHEDULER=1)');
-startIdleWatcher();
 initEngines();
 // URGENT routine replies: recorded for the dashboard's alert strip and forwarded to Telegram; inbound Telegram chat to Zoey.
 // One hook set and one poller per database, like the scheduler.

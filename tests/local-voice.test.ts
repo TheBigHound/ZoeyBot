@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-test('local voice is default in VM mode and never advertises realtime credentials', async () => {
+test('local voice is default in host mode and never advertises realtime credentials', async () => {
   const { voiceMode, localVoiceOptions } = await import('../server/src/local-voice.js');
-  assert.equal(voiceMode({ HQ_VM: '1' }), 'local');
+  assert.equal(voiceMode({ HQ_HOST: '1' }), 'local');
+  assert.equal(voiceMode({ HQ_VM: '1' }), 'xai', 'the VM flag means nothing any more');
   assert.equal(voiceMode({ VOICE_PROVIDER: 'local' }), 'local');
   assert.equal(voiceMode({}), 'xai');
   const opts = await localVoiceOptions();
@@ -45,8 +46,8 @@ test('cached local Whisper transcribes real Zoey speech offline', { skip: proces
   await assert.rejects(transcribeLocal(tooLong, 'en'), /at most 120 seconds/);
 });
 
-test('VM voice HTTP routes do not mint secrets or contact cloud services', async () => {
-  process.env.HQ_VM = '1';
+test('host voice HTTP routes do not mint secrets or contact cloud services', async () => {
+  process.env.HQ_HOST = '1';
   process.env.SESSION_SECRET = 'local-voice-test';
   process.env.DB_PATH = ':memory:';
   const savedFetch = globalThis.fetch;

@@ -7,14 +7,13 @@ ZoeyBot's primary gateway uses `data/primary-hermes`, not the user's live `~/.he
 Set these in the dashboard launch environment (do not print the private gateway key):
 
 ```sh
-HQ_VM=1
-HQ_VM_KNOWN_HOSTS=/Users/thehound/VirtualMachines/ZoeyBot/ssh_known_hosts
+HQ_HOST=1
 HERMES_HOME_PRIMARY=/Users/thehound/zoeybot/data/primary-hermes
 HERMES_URL=http://127.0.0.1:8642
 HERMES_BIN=/Users/thehound/zoeybot/data/primary-hermes/runtime-hermes
 ```
 
-The server reads `API_SERVER_KEY` from the isolated home's mode-0600 `.env`; `HERMES_KEY` need not be duplicated. `.env` contains credentials only (`API_SERVER_KEY`, `HQ_MCP_TOKEN`). Listener settings, model/provider, SSH settings, and MCP credential references are in config, created with the actual `hermes config set` CLI. Managed homes also use that CLI; refreshes preserve existing model/provider choices.
+The server reads `API_SERVER_KEY` from the isolated home's mode-0600 `.env`; `HERMES_KEY` need not be duplicated. `.env` contains credentials only (`API_SERVER_KEY`, `HQ_MCP_TOKEN`). Listener settings, model/provider, terminal cwd/toolsets, and MCP credential references are in config, created with the actual `hermes config set` CLI. Managed homes also use that CLI; refreshes preserve existing model/provider choices.
 
 Restart **the ZoeyBot dashboard backend only** after loading changed engine code or changing `HERMES_BIN`; do not restart or change the user's live Hermes. A dashboard that queried the engine before its key existed may still have the old cached empty key and show ready but no model/providers until this code is loaded. The new code retries discovery of an initially absent private key. The primary ZoeyBot gateway is independently managed and the dashboard never restarts it.
 
@@ -37,15 +36,9 @@ The installed Hermes launcher tries to build a separate `[all]` dependency gener
 
 The private `runtime-hermes` adapter was generated from the installed launcher's `--print-runtime-command --module hermes_cli.main`. It bootstraps the **already committed dependency runtime only**, then sets the requested private `HERMES_HOME` before importing/running the official CLI. It disables lazy installs, never loads the live conversation, copies no credentials, and refuses an unset/private-home-equals-live-home target. The same adapter supports managed homes through `HERMES_BIN`. This is a local compatibility adapter, not a new Hermes configuration command. It depends on the current installed runtime/source location; regenerate and retest after a Hermes installation move or incompatible update.
 
-## VM safety boundary
+## Safety boundary (host mode)
 
-- Hermes terminal and file tools use the native SSH backend: `bot@127.0.0.1:2222`, dedicated key `/Users/thehound/.ssh/zoeybot-utm`, workspace `/home/bot`.
-- The SSH/SCP wrappers prepend strict host verification and the independently pinned project-specific known-hosts file. They disable ControlMaster sockets: deep private-home scratch paths exceed macOS's Unix-domain-socket limit. No global `~/.ssh/known_hosts` writes or SSH host-config inheritance are needed.
-- `HQ_VM_KNOWN_HOSTS` selects the pin file for the dashboard's VM transport. Without it the transport uses `data/vm-known-hosts` and fails closed until that file is independently provisioned; it never auto-enrolls a key.
-- API toolsets are restricted to terminal, file, and todo (plus configured MCP tools). Native host browser, computer-use, Python code execution, delegation, and broad `hermes-api-server` bundles are not enabled.
-- A remote CDP URL alone is **not** browser sandboxing: `browser_exec` runs arbitrary Python on the gateway host. Native browser/computer tools therefore remain disabled while the engine is host-side. Guest browser automation can use SSH with guest tools; a dedicated visual/native-browser guest adapter remains pending. The dashboard's VM desktop/viewer is a separate integration.
-- VM-mode engine calls refuse unsafe primary config. Managed homes are rewritten to guest-only policy instead of adopting an unsafe healthy gateway. Host/cloud credentials are not silently inherited in VM mode.
-- Existing provider login opens a host-home CLI in a bot desktop terminal; that is unsupported in VM mode and returns HTTP 409. Do not pretend a guest terminal can access the host home. Authenticate a future provider explicitly into the selected isolated home, then select its model in Engine settings. No cloud inference is necessary to validate persistence.
+Bots run as the owner's user on this Mac, limited by their toolset allowlist and `cwd` (see "Host mode" below). The former VM/SSH boundary (UTM guest, pinned known-hosts, guest-only toolsets) was removed together with `HQ_VM`; its code no longer exists.
 
 ## Switching providers/models
 
@@ -58,8 +51,8 @@ The existing per-bot Engine settings API stores `provider` and `model` in the da
 - The actual gateway's terminal tool returned `zoeybot`, `bot`, `/home/bot` with exit code 0.
 - The actual gateway's `read_file('/etc/hostname')` returned `zoeybot`, proving file operations reached the guest rather than the Mac.
 - Private `/health`, `/v1/models`, `/api/model/options`, and ZoeyBot `engineInfo` returned successfully; the resulting Ollama chat picker contains only `qwen3.5:35b`.
-- A real managed-home CLI creation and refresh retained a deliberately changed model choice and the SSH/toolset policy; temporary smoke home removed afterward. No second managed gateway was left running.
-- `tests/engine-local.test.ts` plus `tests/vm-backend.test.ts` and server typecheck pass. Test-runner Node deprecation warnings are environmental, not failed assertions.
+- A real managed-home CLI creation and refresh retained a deliberately changed model choice and the toolset policy; temporary smoke home removed afterward. No second managed gateway was left running.
+- `tests/engine-local.test.ts` plus `tests/engine-host.test.ts` and server typecheck pass. Test-runner Node deprecation warnings are environmental, not failed assertions.
 
 Official references consulted: Hermes documentation pages `user-guide/configuration`, `integrations/providers`, `user-guide/features/api-server`, and the installed CLI, gateway, terminal-SSH, and configuration-guard sources. The local compatibility adapter and platform limits above are based on actual execution, not a claim that upstream provides a dedicated shared-runtime flag.
 
@@ -71,15 +64,15 @@ The VM is gone. Every bot's Hermes gateway runs on the macOS host itself: one He
 
 | Variable | Meaning |
 | --- | --- |
-| `HQ_HOST=1` | Host mode. Mutually exclusive with `HQ_VM=1` and `HQ_LOCAL=1` (the server refuses to start with both). Sets `env.hostMode`; `env.vmBox` and `env.localBox` are both `false`. |
+| `HQ_HOST=1` | Host mode, the only mode. Sets `env.hostMode` (loopback bind, dev login implied). `HQ_VM`/`HQ_LOCAL` are ignored; the code behind them is gone. |
 | `HERMES_HOME_PRIMARY` | The primary bot's home (`data/primary-hermes`). Still managed outside the app: never rewritten or restarted by ZoeyBot. |
 | `HERMES_BIN`, `HERMES_URL`, `ENGINES_DIR`, `ENGINE_PORT_BASE`, `MCP_BASE_URL` | Unchanged. Managed homes live under `ENGINES_DIR/<botId>`. |
 
-In host mode the server binds `127.0.0.1`, `DEV_LOGIN` is implied, `XAI_API_KEY`/`COMPOSIO_API_KEY`/`ORGO_API_KEY` are optional, and `orgoComputerId` is empty: there are no screens, `screenForWork` returns immediately, and `writeHome` never calls `screenFor`/CDP.
+In host mode the server binds `127.0.0.1`, `DEV_LOGIN` is implied, and `XAI_API_KEY`/`COMPOSIO_API_KEY` are optional. There are no screens; `writeHome` never touches a display or CDP. Each bot's Library is `<home>/library` (`save_file`, Library tab).
 
 ### Per-bot settings
 
-Two nullable columns on `bots`: `cwd TEXT` and `toolsets TEXT` (a JSON array of Hermes toolset names). They are edited through `PATCH /api/bots/:id/engine` (the same route as `model`/`provider`) and read back on `GET /api/bots/:id/engine`, whose `EngineInfo` now also carries `home`, `cwd` (effective), `toolsets` (effective) and `execution: 'host' | 'vm' | 'orgo'`.
+Two nullable columns on `bots`: `cwd TEXT` and `toolsets TEXT` (a JSON array of Hermes toolset names). They are edited through `PATCH /api/bots/:id/engine` (the same route as `model`/`provider`) and read back on `GET /api/bots/:id/engine`, whose `EngineInfo` now also carries `home`, `cwd` (effective), `toolsets` (effective) and `execution: 'host'` (always; kept for the UI).
 
 - `cwd` must be an absolute, existing directory; otherwise HTTP 400. Unset means `<home>/workspace` (created on write).
 - `toolsets` must contain only known names: `terminal, file, web, browser, skills, todo, memory, vision, code_execution, delegation, chat_history_lookup, cronjob, image_gen, x_search` (`clarify` is rejected: useless over the API). An empty list clears back to the default `['terminal','file','web','browser','skills','todo','memory','vision']`.
@@ -91,6 +84,6 @@ What `writeHome` produces for a managed bot in host mode: `terminal: { backend: 
 
 - Managed homes do **not** use the ssh terminal backend; no `bin/ssh`/`bin/scp` wrappers are written (stale ones are removed on the next write).
 - Toolsets are **not** restricted to the guest-only `terminal, file, todo`; each bot has its own allowlist.
-- `engineFor('primary')` no longer refuses a plain local config: the `vmHomeSafe` gate became `homeSafe`, which only enforces the SSH policy when `HQ_VM=1`.
-- Credentials **are** inherited from the primary home (the VM-only "never inherit" rule applies only under `HQ_VM=1`).
-- `vmEngineSettings` / `sshWrapper` remain exported but are dead code outside VM mode.
+- `engineFor('primary')` no longer refuses a plain local config; the SSH-policy gate is gone.
+- Credentials **are** inherited from the primary home (model keys only, never messaging tokens).
+- `vmEngineSettings` / `sshWrapper`, `server/src/vm*.ts`, `box.ts`, `computer.ts`, `orgo.ts`, `vnc.ts` were deleted (see `docs/cleanup-inventory.md`).
