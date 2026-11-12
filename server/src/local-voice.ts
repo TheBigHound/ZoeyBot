@@ -29,13 +29,44 @@ export function validateWav(wav: Buffer): void {
   if (!hasFormat || !hasAudio) throw new Error('Invalid WAV format or missing audio data');
 }
 
-export async function synthesizeLocal(text: string, codec: 'wav' | 'pcm' = 'wav'): Promise<Buffer> {
+const defaultVoice = () => process.env.LOCAL_TTS_VOICE || 'Zoey';
+
+// Voices the local speech model ships with (`ollama show <model>` lists them under "Voices"). Cached for an hour;
+// an unreadable listing leaves only the default voice available rather than failing the options call.
+let voiceList: { at: number; voices: string[] } | undefined;
+export async function localVoices(): Promise<string[]> {
+  if (voiceList && Date.now() - voiceList.at < 3600_000) return voiceList.voices;
+  let voices = [defaultVoice()];
+  try {
+    const r = await run(process.env.LOCAL_TTS_BIN || 'ollama', ['show', process.env.LOCAL_TTS_MODEL || 'phonon'], { timeout: 15_000, maxBuffer: 1024 * 1024, encoding: 'utf8' });
+    const lines = String(r.stdout).split('\n');
+    const start = lines.findIndex((l) => l.trim() === 'Voices');
+    if (start >= 0) {
+      const found: string[] = [];
+      for (const l of lines.slice(start + 1)) {
+        if (!l.trim()) break;
+        found.push(l.trim());
+      }
+      if (found.length) voices = found.includes(defaultVoice()) ? [defaultVoice(), ...found.filter((v) => v !== defaultVoice())] : [defaultVoice(), ...found];
+    }
+  } catch { /* listing unavailable: default voice only */ }
+  voiceList = { at: Date.now(), voices };
+  return voices;
+}
+
+/** The bot's chosen voice when the local model has it, else the default. Cloud voice ids (luna, rex...) fall back. */
+export async function resolveLocalVoice(voice: string | null | undefined): Promise<string> {
+  const voices = await localVoices();
+  return voice && voices.includes(voice) ? voice : defaultVoice();
+}
+
+export async function synthesizeLocal(text: string, codec: 'wav' | 'pcm' = 'wav', voice?: string): Promise<Buffer> {
   if (!text.trim() || text.length > 400) throw new Error('Speech text must contain 1 to 400 characters');
   if (speechBusy) throw new Error('Local speech is busy; try again shortly');
   speechBusy = true;
   let dir: string | undefined;
   try {
-    const result = await run(process.env.LOCAL_TTS_BIN || 'ollama', ['run', process.env.LOCAL_TTS_MODEL || 'phonon', '--voice', process.env.LOCAL_TTS_VOICE || 'Zoey', '--', text], { encoding: 'buffer', timeout: 120_000, maxBuffer: MAX_AUDIO_BYTES, env: { ...process.env, OLLAMA_NOHISTORY: '1' } });
+    const result = await run(process.env.LOCAL_TTS_BIN || 'ollama', ['run', process.env.LOCAL_TTS_MODEL || 'phonon', '--voice', await resolveLocalVoice(voice), '--', text], { encoding: 'buffer', timeout: 120_000, maxBuffer: MAX_AUDIO_BYTES, env: { ...process.env, OLLAMA_NOHISTORY: '1' } });
     const wav = result.stdout;
     validateWav(wav);
     if (codec === 'wav') return wav;
@@ -109,7 +140,7 @@ export async function localVoiceOptions() {
   return {
     provider: 'local',
     capabilities: { tts: true, stt: await localSttAvailable(), realtime: false, calls: false },
-    voices: [{ id: process.env.LOCAL_TTS_VOICE || 'Zoey', name: process.env.LOCAL_TTS_VOICE || 'Zoey', gender: 'female' }],
+    voices: (await localVoices()).map((id) => ({ id, name: id, gender: id === defaultVoice() ? 'female' : 'unknown' })),
     languages: [{ code: 'auto', name: 'Model default (English)' }, { code: 'en', name: 'English' }],
     speeds: [1],
     callDisabledReason: 'Local voice supports preview and dictation, not live voice calls. Use the microphone to dictate into chat.',

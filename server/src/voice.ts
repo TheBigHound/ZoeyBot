@@ -430,7 +430,8 @@ voiceApi.post('/preview', async (c) => {
     if (!text.trim() || text.length > 400) return c.json({ error: 'Speech text must contain 1 to 400 characters' }, 400);
     try {
       const pcm = p.codec === 'pcm';
-      const audio = await synthesizeLocal(text, pcm ? 'pcm' : 'wav');
+      // Per-bot voice: the request's choice, else the bot row's. Cloud voice ids resolve to the local default.
+      const audio = await synthesizeLocal(text, pcm ? 'pcm' : 'wav', String(p.voice || bot?.voice || '').slice(0, 80));
       return c.body(new Uint8Array(audio), 200, { 'Content-Type': pcm ? `audio/pcm;rate=${SAMPLE_RATE}` : 'audio/wav', 'Cache-Control': 'no-store' });
     } catch (e) {
       console.warn('[voice] local TTS failed:', (e as Error).message);

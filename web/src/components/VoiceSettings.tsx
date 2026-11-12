@@ -71,7 +71,8 @@ export function VoiceSettings({ bot }: { bot: Bot }) {
   const local = opts.provider === 'local';
   const voices = local || opts.voices.some((v) => v.id === bot.voice) ? opts.voices : [{ id: bot.voice, name: bot.voice }, ...opts.voices];
   const speeds = local || opts.speeds.includes(bot.voiceSpeed) ? opts.speeds : [...opts.speeds, bot.voiceSpeed].sort((a, b) => a - b);
-  const selectedVoice = local ? opts.voices[0]?.id ?? 'Loading…' : bot.voice;
+  // Local mode: show the bot's own voice when the local model has it, else the default (first) voice.
+  const selectedVoice = local ? (opts.voices.some((v) => v.id === bot.voice) ? bot.voice : opts.voices[0]?.id ?? 'Loading…') : bot.voice;
 
   return (
     <div className="panel-card">

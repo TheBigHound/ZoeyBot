@@ -21,6 +21,16 @@ test('local synthesis rejects oversized/empty text before launching a process', 
   await assert.rejects(synthesizeLocal('x'.repeat(401)), /1 to 400/);
 });
 
+test('per-bot voice: a phonon voice is honored, a cloud voice id falls back to the default', async () => {
+  const { localVoices, resolveLocalVoice } = await import('../server/src/local-voice.js');
+  const voices = await localVoices();
+  assert.equal(voices[0], 'Zoey', 'default voice listed first');
+  assert.equal(await resolveLocalVoice('luna'), 'Zoey', 'xAI voice ids are not phonon voices');
+  assert.equal(await resolveLocalVoice(undefined), 'Zoey');
+  if (voices.includes('Easton')) assert.equal(await resolveLocalVoice('Easton'), 'Easton');
+  else assert.equal(voices.length, 1, 'without an ollama listing only the default voice exists');
+});
+
 test('WAV validation rejects non-audio output', async () => {
   const { validateWav } = await import('../server/src/local-voice.js');
   assert.throws(() => validateWav(Buffer.from('not a WAV')), /WAV/);
