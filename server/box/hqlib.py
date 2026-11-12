@@ -907,7 +907,11 @@ def start_browser(n, bot_id, accent=None, restart=False, log=None):
     pid = mains[0][0]
     if not up:
         warnings.append('Chrome is running on screen %d but DevTools port %d does not answer' % (n, cdp_port(n)))
-    if started and up:
+    ext = extension_id()
+    installed = ext and os.path.isdir('%s/Default/Extensions/%s' % (profile_dir(bot_id), ext))
+    if up and (started or installed):
+        # Policy may arrive while this browser is already running. Only blank/new-tab pages
+        # are swapped by _show_home; real working tabs are left untouched.
         _show_home(n, bot_id, warnings, say)
     # Maximized window, whatever the profile remembered.
     end = time.time() + (10 if started else 1)

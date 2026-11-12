@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from './env.js';
 import { orgo } from './orgo.js';
+import { vmBash, displayNumber } from './vm.js';
 
 /**
  * The box: the one Orgo computer every bot works on. When this server runs on that computer
@@ -13,7 +14,7 @@ import { orgo } from './orgo.js';
 export interface BashResult { output: string; exit_code: number }
 
 /** Orgo screen id -> X display. The default screen is :99, "screen-100" is :100. */
-export const displayFor = (screenId?: string | null) => (!screenId || screenId === 'default' ? ':99' : `:${screenId.replace('screen-', '')}`);
+export const displayFor = (screenId?: string | null) => env.vmBox ? `:${displayNumber(screenId)}` : (!screenId || screenId === 'default' ? ':99' : `:${screenId.replace('screen-', '')}`);
 
 /** Only what a desktop command needs; none of this server's secrets. */
 function shellEnv(screenId?: string | null): NodeJS.ProcessEnv {
@@ -43,6 +44,7 @@ export const box = {
 
   /** Run a bash command on the box. `screenId` picks which screen's DISPLAY it sees. */
   async bash(command: string, timeoutSec = 60, screenId?: string | null): Promise<BashResult> {
+    if (env.vmBox) return vmBash(command, timeoutSec, screenId);
     if (env.localBox) return localBash(command, timeoutSec, screenId);
     if (!env.orgoComputerId) throw new Error('ORGO_COMPUTER_ID is not set');
     const cmd = `export DISPLAY=${displayFor(screenId)}; ${command}`;
@@ -51,6 +53,7 @@ export const box = {
   },
 
   async writeFile(file: string, content: string | Buffer, mode = '0644'): Promise<void> {
+    if (!/^0?[0-7]{3}$/.test(mode)) throw new Error('Invalid file mode');
     const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
     if (env.localBox) {
       await fs.mkdir(path.dirname(file), { recursive: true });
@@ -62,10 +65,13 @@ export const box = {
     const b64 = buf.toString('base64');
     const tmp = `${file}.b64`;
     const first = await box.bash(`mkdir -p ${q(path.dirname(file))} && : > ${q(tmp)} && echo ok`, 30);
-    if (!first.output.includes('ok')) throw new Error(`could not write ${file}: ${first.output.slice(0, 200)}`);
-    for (let i = 0; i < b64.length; i += 60000) await box.bash(`printf '%s' '${b64.slice(i, i + 60000)}' >> ${q(tmp)}`, 30);
+    if (first.exit_code !== 0 || !first.output.includes('ok')) throw new Error(`could not write ${file}: ${first.output.slice(0, 200)}`);
+    for (let i = 0; i < b64.length; i += 60000) {
+      const part = await box.bash(`printf '%s' '${b64.slice(i, i + 60000)}' >> ${q(tmp)}`, 30);
+      if (part.exit_code !== 0) throw new Error(`could not write ${file}: ${part.output.slice(0, 200)}`);
+    }
     const done = await box.bash(`base64 -d ${q(tmp)} > ${q(file)} && rm -f ${q(tmp)} && chmod ${mode} ${q(file)} && echo ok`, 30);
-    if (!done.output.includes('ok')) throw new Error(`could not write ${file}: ${done.output.slice(0, 200)}`);
+    if (done.exit_code !== 0 || !done.output.includes('ok')) throw new Error(`could not write ${file}: ${done.output.slice(0, 200)}`);
   },
 
   /** Read a file from the box, or null if it isn't there. Meant for small files (under ~4 MB). */
@@ -74,9 +80,29 @@ export const box = {
       try { return await fs.readFile(file); } catch { return null; }
     }
     const r = await box.bash(`[ -f ${q(file)} ] && base64 -w0 ${q(file)} || echo __missing__`, 60);
+    if (r.exit_code !== 0) throw new Error(`could not read ${file}: ${r.output.slice(0, 300)}`);
     const out = r.output.trim();
     if (!out || out.endsWith('__missing__')) return null;
     return Buffer.from(out, 'base64');
+  },
+
+  /** Confined Library download, checked on the guest (never against the Mac filesystem). */
+  async readConfinedFile(root: string, relative: string, maxBytes = 16 * 1024 * 1024): Promise<Buffer | null> {
+    const code = [
+      'import os, sys, base64',
+      `root = os.path.realpath(${JSON.stringify(root)})`,
+      `file = os.path.realpath(os.path.join(root, ${JSON.stringify(relative)}))`,
+      "if not file.startswith(root + os.sep) or not os.path.isfile(file):",
+      "    print('__missing__'); sys.exit(0)",
+      "with open(file, 'rb') as f:",
+      `    data = f.read(${Math.floor(maxBytes) + 1})`,
+      `if len(data) > ${Math.floor(maxBytes)}: raise RuntimeError('file too large for local download')`,
+      "print(base64.b64encode(data).decode())",
+    ].join('\n');
+    const r = await box.bash(`python3 -c ${q(code)}`, 60);
+    if (r.exit_code !== 0) throw new Error(r.output.trim().slice(-300));
+    if (r.output.trim() === '__missing__') return null;
+    return Buffer.from(r.output.trim(), 'base64');
   },
 
   quote: q,

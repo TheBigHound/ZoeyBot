@@ -1,3 +1,29 @@
+/* ---------- voice state hues: dots, rings, bars, one caption key — never fills ---------- */
+:root { --v-listen: #14C16F; --v-transcribe: #13B7A2; --v-think: #F59312; --v-speak: var(--bot-action, var(--color-bot-orange)); }
+
+/* ---------- header voice pill: the single honest mic/voice indicator ---------- */
+.local-voice { display: flex; align-items: center; gap: 8px; padding: 0 4px 8px; }
+.voice-pill {
+  height: 30px; padding: 0 12px; border-radius: var(--radius-full); border: 0.5px solid var(--color-border-secondary);
+  background: none; color: var(--color-text-secondary); font-size: var(--text-sm); font-weight: var(--font-weight-medium);
+  display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; transition: background 120ms, color 120ms, border-color 120ms;
+}
+.voice-pill:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.voice-pill:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.voice-pill:disabled { opacity: 0.5; cursor: not-allowed; }
+.voice-pill[aria-disabled="true"] { cursor: default; }
+.voice-pill__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-quaternary); flex: none; }
+.voice-pill__detail { font-weight: var(--font-weight-regular); color: var(--color-text-tertiary); }
+.voice-pill__detail[role="alert"] { color: var(--color-danger-text); }
+.voice-pill.is-on { color: var(--color-text-primary); background: var(--color-bg-tertiary); }
+.voice-pill.is-on .voice-pill__dot { background: var(--color-success-text); }
+.voice-pill.is-live, .voice-pill.is-paused {
+  color: var(--color-text-primary); background: var(--bot-action-soft); border-color: color-mix(in srgb, var(--bot-action) 40%, transparent);
+}
+.voice-pill.is-live .voice-pill__dot { background: var(--v-listen); box-shadow: 0 0 0 3px color-mix(in srgb, var(--v-listen) 15%, transparent); animation: voice-glow 1.6s ease-in-out infinite; }
+.voice-pill.is-paused .voice-pill__dot { background: var(--bot-action); box-shadow: 0 0 0 3px var(--bot-action-soft); }
+@keyframes voice-glow { 0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--v-listen) 15%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--v-listen) 30%, transparent); } }
+
 /* ---------- voice call bar (sits above the composer) ---------- */
 .vcall {
   max-width: 960px; margin: 0 auto 8px; width: calc(100% - 32px);
@@ -69,6 +95,7 @@
 .composer__btn.is-recording { background: var(--color-danger); color: #FFFFFF; animation: breathe 1.2s ease-in-out infinite; }
 .composer__btn.is-recording > * { opacity: 1 !important; }
 .composer__btn.is-transcribing { animation: breathe 0.9s ease-in-out infinite; }
+.composer__btn.is-starting { animation: breathe 0.6s ease-in-out infinite; outline: 1px dashed var(--color-danger, #e5484d); outline-offset: -1px; }
 .composer__cta.is-in-call { background: var(--color-danger); }
 .composer__cta.is-in-call:hover:not(:disabled) { background: #C82532; }
 
@@ -87,3 +114,86 @@
 .panel-row--call { gap: 8px; color: var(--color-ink); font-size: 13px; }
 .panel-row--call.is-active { color: var(--color-danger); }
 .voice-error { padding: 4px 12px 8px; font-size: 12px; color: var(--color-danger); }
+
+/* ---------- local turn-based voice panel (sits above the composer; separate from cloud realtime calls) ---------- */
+.voice-panel {
+  --v-state: var(--color-text-quaternary);
+  margin-bottom: 10px; border-radius: var(--radius-card); background: var(--color-bg-elevated);
+  border: 0.5px solid var(--color-border-secondary); overflow: hidden; animation: rise 0.22s var(--ease-out);
+}
+.voice-panel__hd { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 10px 14px 6px; }
+.voice-panel__ring { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; position: relative; flex: none; }
+.voice-panel__ring::before, .voice-panel__ring::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid var(--v-state); opacity: 0.55; pointer-events: none; z-index: 1; }
+.voice-panel__ring::after { inset: -6px; opacity: 0.18; }
+.voice-panel.is-speaking .voice-panel__ring::after, .voice-panel.is-listening .voice-panel__ring::after { animation: voice-ring 1.8s ease-in-out infinite; }
+@keyframes voice-ring { 0%, 100% { transform: scale(1); opacity: 0.18; } 50% { transform: scale(1.08); opacity: 0.32; } }
+.voice-panel__ring-fallback { width: 32px; height: 32px; border-radius: 50%; background: var(--bot-fill, var(--color-text-quaternary)); }
+.voice-panel__id { min-width: 0; }
+.voice-panel__ttl { display: flex; align-items: center; gap: 8px; font-size: var(--text-base); font-weight: var(--font-weight-semibold); min-width: 0; }
+.voice-panel__tag {
+  font-size: 11px; font-weight: var(--font-weight-medium); color: var(--color-text-tertiary); border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--radius-full); padding: 0 7px; line-height: 17px; white-space: nowrap;
+}
+.voice-panel__status { display: flex; align-items: flex-start; gap: 7px; font-size: var(--text-sm); line-height: 18px; color: var(--color-text-secondary); margin-top: 2px; min-width: 0; }
+.voice-panel__status > span { min-width: 0; overflow-wrap: anywhere; }
+.voice-panel__status[role="alert"] { color: var(--color-danger-text); }
+.voice-panel__sdot { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--v-state); box-shadow: 0 0 0 3px color-mix(in srgb, var(--v-state) 15%, transparent); flex: none; }
+.voice-panel.is-starting .voice-panel__sdot, .voice-panel.is-transcribing .voice-panel__sdot, .voice-panel.is-synthesizing .voice-panel__sdot,
+.voice-panel.is-sending .voice-panel__sdot, .voice-panel.is-waiting .voice-panel__sdot { animation: breathe 1.4s ease-in-out infinite; }
+.voice-panel__status-muted { color: var(--color-text-quaternary); }
+.voice-panel__actions { display: flex; gap: 6px; flex: none; }
+.voice-panel__btn {
+  height: 30px; padding: 0 12px; border-radius: var(--radius-full); font-size: var(--text-sm); font-weight: var(--font-weight-medium);
+  display: inline-flex; align-items: center; gap: 6px; border: 0.5px solid var(--color-border-secondary); color: var(--color-text-primary);
+  background: var(--color-bg-tertiary); white-space: nowrap; transition: background 120ms;
+}
+.voice-panel__btn:hover { background: var(--color-bg-hover); }
+.voice-panel__btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.voice-panel__btn--ghost { background: none; color: var(--color-text-secondary); }
+.voice-panel__btn--danger { color: var(--color-danger-text); border-color: color-mix(in srgb, var(--color-danger-text) 20%, transparent); background: var(--color-danger-bg); }
+.voice-panel__btn--danger:hover { background: color-mix(in srgb, var(--color-danger-text) 18%, transparent); }
+
+/* state rail: the whole turn loop is visible, current step lit in its hue */
+.voice-panel__rail { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; padding: 0 14px 10px; margin: 0; list-style: none; }
+.voice-panel__step { display: flex; align-items: center; gap: 8px; font-size: var(--text-xs); color: var(--color-text-quaternary); position: relative; padding: 6px 0; min-width: 0; }
+.voice-panel__step::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--color-border-primary); flex: none; }
+.voice-panel__step-label { line-height: 1.25; min-width: 0; }
+.voice-panel__step.is-done { color: var(--color-text-tertiary); }
+.voice-panel__step.is-done::before { background: var(--color-text-quaternary); }
+.voice-panel__step.is-on { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+.voice-panel__step.is-on::before { background: var(--v-step); box-shadow: 0 0 0 3px color-mix(in srgb, var(--v-step) 15%, transparent); }
+.voice-panel__ms { margin-left: auto; margin-right: 14px; flex: none; font-variant-numeric: tabular-nums; color: var(--color-text-quaternary); font-weight: var(--font-weight-regular); }
+.voice-panel__step:not(:last-child)::after { content: ''; position: absolute; right: 6px; top: 50%; width: 2px; height: 2px; border-radius: 50%; background: var(--color-border-primary); }
+
+/* level meter: real-time input (listening) or output (speaking) feedback */
+.voice-panel__wave {
+  display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 14px; background: var(--color-bg-subtle);
+  border-top: 0.5px solid var(--color-border-tertiary); border-bottom: 0.5px solid var(--color-border-tertiary);
+}
+.voice-panel__bars { display: flex; align-items: center; gap: 3px; flex: 1 1 auto; min-width: 0; height: 100%; }
+.voice-panel__bar { flex: 1; max-width: 4px; min-width: 2px; border-radius: 2px; background: var(--v-state); opacity: 0.85; height: var(--h, 4px); transition: height 60ms linear; }
+.voice-panel.is-paused .voice-panel__bar, .voice-panel.is-starting .voice-panel__bar { opacity: 0.3; }
+.voice-panel__wave-lbl { flex: none; font-size: 11px; color: var(--color-text-tertiary); display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.voice-panel__micoff { display: inline-flex; align-items: center; gap: 4px; color: var(--color-text-quaternary); }
+.voice-panel__micoff svg { display: block; }
+
+/* captions side by side: yours quiet on the left, the bot's as primary text on the right */
+.voice-panel__caps { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.voice-panel__cap { padding: 8px 14px 10px; font-size: var(--text-sm); line-height: 1.45; min-width: 0; }
+.voice-panel__cap + .voice-panel__cap { border-left: 0.5px solid var(--color-border-tertiary); }
+.voice-panel__cap-k { font-size: 11px; font-weight: var(--font-weight-semibold); letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-quaternary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+.voice-panel__cap-k i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-quaternary); }
+.voice-panel__cap--bot .voice-panel__cap-k i { background: var(--v-speak); }
+.voice-panel__cap-t { color: var(--color-text-secondary); max-height: 96px; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.voice-panel__cap--bot .voice-panel__cap-t { color: var(--color-text-primary); }
+.voice-panel__cap-t.is-empty { color: var(--color-text-quaternary); font-style: italic; }
+.voice-panel__foot { padding: 6px 14px 8px; font-size: 11px; color: var(--color-text-quaternary); border-top: 0.5px solid var(--color-border-tertiary); }
+.voice-panel.is-error .voice-panel__foot { border-top: 0; }
+
+@media (max-width: 720px) {
+  .voice-panel__hd { grid-template-columns: auto 1fr; }
+  .voice-panel__actions { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: wrap; }
+  .voice-panel__rail { grid-template-columns: 1fr 1fr; }
+  .voice-panel__caps { grid-template-columns: 1fr; }
+  .voice-panel__cap + .voice-panel__cap { border-left: 0; border-top: 0.5px solid var(--color-border-tertiary); }
+}

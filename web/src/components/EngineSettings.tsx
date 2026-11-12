@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type React from 'react';
 import type { Bot, EngineInfo, EngineProvider } from '@shared/types';
 import { configApi } from '../lib/configApi';
 import { useStore } from '../store';
@@ -12,32 +13,40 @@ function sortProviders(list: EngineProvider[]): EngineProvider[] {
   return [...list].sort((a, b) => Number(b.connected) - Number(a.connected));
 }
 
+/** Human name of the engine's active provider ("Ollama (local)"), falling back to the raw id. */
+export function providerName(engine: EngineInfo | null): string | null {
+  if (!engine?.provider) return null;
+  return engine.providers?.find((p) => p.id === engine.provider)?.name ?? engine.provider;
+}
+
+export type EnginePhase = 'loading' | 'ok' | 'unavailable';
+export interface EngineController {
+  engine: EngineInfo | null;
+  phase: EnginePhase;
+  /** Quiet refreshes keep what is on screen if the call fails. */
+  load: (quiet?: boolean) => () => void;
+  apply: (e: EngineInfo, keepDraft?: boolean) => void;
+  /** Set by the form while the person has unsaved edits, so quiet refreshes don't clobber them. */
+  dirty: React.MutableRefObject<boolean>;
+}
+
 /**
- * "Engine" section of the details panel: which provider and model run this bot's agent, signing in to
- * a subscription, and the agent's status. Every call fails soft: if the engine endpoints are missing or
- * down, the section says so and the rest of the panel is unaffected.
+ * One fetch of a bot's engine info, shared by the identity line and the Engine tab so the panel makes a
+ * single request. Polls while the agent is starting.
  */
-export function EngineSettings({ bot }: { bot: Bot }) {
-  const viewerOpen = useStore((s) => s.viewerOpen);
-  const set = useStore((s) => s.set);
+export function useEngineInfo(bot: Bot): EngineController {
   const [engine, setEngine] = useState<EngineInfo | null>(null);
-  const [phase, setPhase] = useState<'loading' | 'ok' | 'unavailable'>('loading');
-  const [provider, setProvider] = useState('');
-  const [model, setModel] = useState('');
-  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const [signingIn, setSigningIn] = useState(false);
+  const [phase, setPhase] = useState<EnginePhase>('loading');
   const dirty = useRef(false);
   const botId = bot.id;
 
   const apply = useCallback((e: EngineInfo, keepDraft = false) => {
     setEngine(e); setPhase('ok');
-    if (!keepDraft || !dirty.current) { dirty.current = false; setProvider(e.provider ?? ''); setModel(e.model ?? ''); }
+    if (!keepDraft) dirty.current = false;
     // Keep the bot's model label in step without waiting for the server's `bot` event.
     useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === e.botId && (b.model !== e.model || b.provider !== e.provider) ? { ...b, model: e.model, provider: e.provider } : b)) }));
   }, []);
 
-  /** Quiet refreshes keep what is on screen if the call fails. */
   const load = useCallback((quiet = false) => {
     let alive = true;
     if (!quiet) setPhase('loading');
@@ -47,7 +56,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     return () => { alive = false; };
   }, [botId, apply]);
 
-  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setSigningIn(false); return load(); }, [load]);
+  useEffect(() => { dirty.current = false; setEngine(null); return load(); }, [load]);
 
   // The agent takes a moment to come up after a change or a restart.
   const starting = engine?.status === 'starting';
@@ -56,6 +65,36 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     const t = setInterval(() => load(true), 3000);
     return () => clearInterval(t);
   }, [starting, load]);
+
+  return { engine, phase, load, apply, dirty };
+}
+
+/**
+ * Engine form (details panel → Engine tab): which provider and model run this bot's agent, signing in to
+ * a subscription, and the agent's status. Every call fails soft: if the engine endpoints are missing or
+ * down, the section says so and the rest of the panel is unaffected.
+ */
+export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }) {
+  const viewerOpen = useStore((s) => s.viewerOpen);
+  const set = useStore((s) => s.set);
+  const { engine, phase, load, dirty } = ctl;
+  const [provider, setProvider] = useState('');
+  const [model, setModel] = useState('');
+  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const botId = bot.id;
+
+  // Draft follows the server's values unless the person is mid-edit.
+  const srvProvider = engine?.provider ?? '';
+  const srvModel = engine?.model ?? '';
+  useEffect(() => { if (!dirty.current) { setProvider(srvProvider); setModel(srvModel); } }, [srvProvider, srvModel, dirty]);
+  useEffect(() => { setNote(null); setSigningIn(false); }, [botId]);
+
+  const apply = useCallback((e: EngineInfo, keepDraft = false) => {
+    ctl.apply(e, keepDraft);
+    if (!keepDraft || !dirty.current) { setProvider(e.provider ?? ''); setModel(e.model ?? ''); }
+  }, [ctl, dirty]);
 
   // Signing in happens on the bot's computer. Check while that view is open, and once more when it closes.
   useEffect(() => {

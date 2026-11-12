@@ -7,7 +7,7 @@ export type IconName =
   // inline extras not in the icon font export
   | 'arrow_up' | 'stop' | 'more' | 'monitor' | 'refresh'
   // inline outline glyphs
-  | 'eye' | 'pointer' | 'expand' | 'shrink';
+  | 'eye' | 'pointer' | 'expand' | 'shrink' | 'mail' | 'bolt';
 
 const INLINE: Partial<Record<IconName, string>> = {
   arrow_up: 'M12 4.5a1 1 0 0 1 .7.3l6 6a1 1 0 0 1-1.4 1.4L13 7.9V19a1 1 0 1 1-2 0V7.9l-4.3 4.3a1 1 0 1 1-1.4-1.4l6-6a1 1 0 0 1 .7-.3Z',
@@ -23,6 +23,8 @@ const OUTLINE: Partial<Record<IconName, string>> = {
   pointer: 'M5.4 4.6 10.9 19.4 13.2 13.2 19.4 10.9 5.4 4.6Z',
   expand: 'M14.5 4.5h5v5 M19.5 4.5l-5.8 5.8 M9.5 19.5h-5v-5 M4.5 19.5l5.8-5.8',
   shrink: 'M19.5 9.7h-5.2V4.5 M14.3 9.7l5.4-5.4 M4.5 14.3h5.2v5.2 M9.7 14.3l-5.4 5.4',
+  mail: 'M3.5 6.5h17v11h-17z M3.5 6.5 12 12.5l8.5-6',
+  bolt: 'M13 3 5 13.5h6L10 21l8-10.5h-6z',
 };
 
 interface Props { name: IconName; size?: number; opacity?: number; className?: string; style?: CSSProperties; color?: string }

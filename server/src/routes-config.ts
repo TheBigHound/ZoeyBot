@@ -248,7 +248,7 @@ configApi.post('/bots/:id/files/download', async (c) => {
   const rel = safeRel(path);
   if (!rel) return c.json({ error: 'bad path' }, 400);
   // On the computer itself the file is on our own disk: serve it directly.
-  if (box.local) return c.json({ url: `/api/bots/${b.id}/files/raw?path=${encodeURIComponent(rel)}` });
+  if (box.local || env.vmBox) return c.json({ url: `/api/bots/${b.id}/files/raw?path=${encodeURIComponent(rel)}` });
   try {
     if (!env.orgoComputerId) return c.json({ error: 'computer unavailable' }, 409);
     const r: any = await orgo.exportFile(env.orgoComputerId, `${LIB_ROOT}/${b.id}/${rel}`);
@@ -260,12 +260,27 @@ configApi.post('/bots/:id/files/download', async (c) => {
   }
 });
 
-configApi.get('/bots/:id/files/raw', (c) => {
+configApi.get('/bots/:id/files/raw', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
-  if (!b || !box.local) return c.json({ error: 'not found' }, 404);
+  if (!b || (!box.local && !env.vmBox)) return c.json({ error: 'not found' }, 404);
   const rel = safeRel(c.req.query('path'));
   if (!rel) return c.json({ error: 'bad path' }, 400);
   const root = `${LIB_ROOT}/${b.id}`;
+  if (env.vmBox) {
+    try {
+      const data = await box.readConfinedFile(root, rel);
+      if (!data) return c.json({ error: 'not found' }, 404);
+      return c.body(new Uint8Array(data), 200, {
+        'content-type': 'application/octet-stream',
+        'content-length': String(data.length),
+        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(rel.split('/').pop()!)}`,
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'no-store',
+      });
+    } catch (e: any) {
+      return c.json({ error: String(e?.message ?? e).slice(-300) }, /too large/.test(String(e)) ? 413 : 502);
+    }
+  }
   let file: string;
   try {
     // Follow links before checking, so a link inside the library cannot point outside it.

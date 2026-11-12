@@ -210,6 +210,13 @@ export interface EngineInfo {
   ownScreen: boolean;
 }
 
+/** Where a person can reach their bots: the web app, Telegram, Slack. Never carries secrets. */
+export interface ChannelsStatus {
+  web: { connected: true };
+  telegram: { configured: boolean; username?: string; chatAllowlisted: boolean; notifications: boolean };
+  slack: { connected: boolean };
+}
+
 export interface Toolkit {
   slug: string; name: string; logo?: string; description?: string; categories: string[];
   managedAuth: boolean; noAuth: boolean; connected: boolean;

@@ -2,6 +2,8 @@ import { db } from '../db.js';
 import { getBotRow, listRoutines } from '../store.js';
 import { connectedToolkits } from '../composio.js';
 import { LIBRARY_ROOT } from './tools.js';
+import { env } from '../env.js';
+import { voiceMode } from '../local-voice.js';
 
 /**
  * What the app adds to the agent's own system prompt on every turn (sent as `instructions`).
@@ -30,7 +32,9 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
     ? `This conversation comes from ${owner}'s team app, where you appear as "${bot.name}"${bot.label ? ` (${bot.label})` : ''}. You are the same agent as everywhere else you talk with ${owner}: keep your own identity, memory and voice.${bot.is_primary ? ` You are ${owner}'s main point of contact in the app and coordinate with the other agents on the team.` : ''}`
     : `You are ${bot.name}${bot.label ? `, ${bot.label},` : ''} on ${owner}'s team of AI agents. ${owner} talks to you in their team app.${bot.description ? `\nAbout you: ${bot.description}` : ''}${bot.is_primary ? `\nYou are ${owner}'s main point of contact and coordinate with the other agents on the team.` : ''}`;
 
-  return `# Team app
+  const execution = env.vmBox ? '# Execution rules for this local VM\nThe terminal tool executes real commands inside your Linux VM. Use it whenever the user asks you to run a command, inspect files, or check system state. You must issue a real tool call before reporting results. Do not simulate a terminal or invent localhost/root output. If a tool is unavailable or fails, say that plainly. Browser and computer actions must use the VM tools, never the Mac host.\n\n' : '';
+
+  return `${execution}# Team app
 ${who}
 
 ## The app's tools
@@ -48,7 +52,7 @@ The app gives you extra tools through its MCP server "hq"; their names carry tha
 ## Your computer
 You have your own screen on a Linux computer shared by the team: a desktop with your own browser. ${owner} can watch it live in the app and can take over the mouse and keyboard. Use your browser and computer tools for sites that have no connected app. Stay on your own screen.
 
-## Style
+${voiceMode() === 'local' ? `## Local speech\nThe app can read your new completed replies aloud using local phonon/Zoey after the user clicks "Enable local voice" above the composer. It is off by default; that one browser gesture enables automatic speech for subsequent replies in the selected chat. You cannot enable it from chat or verify browser playback. If asked to speak, briefly point to that control and reply naturally; do not claim you have no voice or promise sound is already playing. The user can stop audio and mute future speech with "Mute local voice". Microphone dictation is separate. Local live voice calls are not supported; no cloud speech fallback is used.\n\n` : ''}## Style
 - Write like a sharp colleague texting: short, warm, direct. No headings for simple replies. Lists or tables only when they help.
 - Never say something is done unless a tool result shows it. Never invent facts.
 - Report outcomes; do not narrate each tool call.

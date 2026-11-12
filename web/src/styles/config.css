@@ -110,8 +110,7 @@
 .cfg-meter__track { height: 6px; border-radius: var(--radius-full); background: var(--color-bg-tertiary); overflow: hidden; }
 .cfg-meter__track span { display: block; height: 100%; border-radius: inherit; background: var(--bot-action, var(--color-primary)); }
 
-/* ---------- details panel: header gear, library, tasks ---------- */
-.details__gear { margin-right: auto; }
+/* ---------- details panel: library, tasks ---------- */
 .lib-crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .lib-crumbs .link-btn { padding: 2px 4px; margin: -2px 0; }
 .lib-crumbs__part { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }

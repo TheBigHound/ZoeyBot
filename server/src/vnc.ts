@@ -4,6 +4,8 @@ import { db } from './db.js';
 import { userFromCookieHeader } from './lib/auth.js';
 import { vncAuthResponse } from './lib/des.js';
 import { orgo } from './orgo.js';
+import { env } from './env.js';
+import { isLocalRequest, vncUrlFor } from './vm.js';
 import { readyScreen, screenFor } from './computer.js';
 import { viewerClosed, viewerOpened } from './idle.js';
 
@@ -125,6 +127,11 @@ export function attachVncRelay(server: Server) {
     const url = new URL(req.url ?? '/', 'http://x');
     const m = url.pathname.match(/^\/api\/bots\/([^/]+)\/screen$/);
     if (!m) return; // not ours
+    if (env.vmBox && !isLocalRequest(req.headers.host, req.headers.origin)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     const user = userFromCookieHeader(req.headers.cookie);
     const bot = user ? (db.prepare('SELECT * FROM bots WHERE id=? AND user_id=?').get(m[1], user.id) as any) : null;
     if (!user || !bot) {
@@ -135,6 +142,12 @@ export function attachVncRelay(server: Server) {
     const mode = url.searchParams.get('mode') === 'control' ? 'control' : 'watch';
     wss.handleUpgrade(req, socket, head, (client) => relay(client, user.id, bot.id, mode));
   });
+}
+
+export async function vncTarget(computerId: string, screenId: string): Promise<{ url: string; password: string }> {
+  if (env.vmBox) return { url: vncUrlFor(screenId), password: '' };
+  const { password } = await orgo.vncPassword(computerId);
+  return { password, url: `wss://www.orgo.ai/desktops/${computerId}/ws/websockify?token=${encodeURIComponent(password)}${screenId !== 'default' ? `&screen=${encodeURIComponent(screenId)}` : ''}` };
 }
 
 async function relay(client: WebSocket, userId: string, botId: string, mode: 'watch' | 'control') {
@@ -160,8 +173,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     const { computerId, screenId } = await screenFor(userId, botId);
     // A screen nobody has used yet is bare; set it up while the person is already watching.
     readyScreen(userId, botId).catch(() => {});
-    const { password } = await orgo.vncPassword(computerId);
-    const upUrl = `wss://www.orgo.ai/desktops/${computerId}/ws/websockify?token=${encodeURIComponent(password)}${screenId !== 'default' ? `&screen=${encodeURIComponent(screenId)}` : ''}`;
+    const { password, url: upUrl } = await vncTarget(computerId, screenId);
     upstream = new WebSocket(upUrl, ['binary']);
     upstream.on('message', (data: Buffer) => {
       if (!piping) return fromUp.push(Buffer.from(data));

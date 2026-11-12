@@ -57,26 +57,62 @@ function cornerClass(i: number, n: number) {
   return ' is-mid';
 }
 
-const Bubble = memo(function Bubble({ row, side, pos }: { row: Row; side: 'left' | 'right'; pos: string }) {
-  const b = row.body as MessageBody;
+function Citations({ b }: { b: MessageBody }) {
+  if (!b.citations || b.citations.length === 0) return null;
   return (
-    <div className={`bubble-wrap is-${side}`}>
-      <div className={`bubble is-${side === 'right' ? 'user' : 'agent'}${pos}${b.streaming ? ' is-streaming' : ''}`}>
-        {side === 'right' ? <div className="bubble__plain">{b.text}</div> : <Markdown text={b.text || ' '} />}
-        {b.citations && b.citations.length > 0 && (
-          <div className="bubble__cites">
-            {b.citations.slice(0, 6).map((c, i) => {
-              let host = c.url;
-              try { host = new URL(c.url).hostname.replace(/^www\./, ''); } catch { /* keep */ }
-              return <a key={i} className="cite-chip" href={c.url} target="_blank" rel="noreferrer noopener" title={c.title ?? c.url}>{host}</a>;
-            })}
-          </div>
-        )}
+    <div className="bubble__cites">
+      {b.citations.slice(0, 6).map((c, i) => {
+        let host = c.url;
+        try { host = new URL(c.url).hostname.replace(/^www\./, ''); } catch { /* keep */ }
+        return <a key={i} className="cite-chip" href={c.url} target="_blank" rel="noreferrer noopener" title={c.title ?? c.url}>{host}</a>;
+      })}
+    </div>
+  );
+}
+
+/** The person's turn: a tinted bubble on the right. Voice turns carry a footnote so the history stays honest. */
+const Bubble = memo(function Bubble({ row, pos }: { row: Row; pos: string }) {
+  const b = row.body as MessageBody;
+  const voice = b.from?.kind === 'voice';
+  return (
+    <div className="bubble-wrap is-right">
+      <div className="bubble-stack">
+        <div className={`bubble is-user${pos}${b.streaming ? ' is-streaming' : ''}`}>
+          <div className="bubble__plain">{b.text}</div>
+          <Citations b={b} />
+        </div>
+        {voice && <span className="bubble__source"><Icon name="mic" size={11} opacity={0.56} />Voice · transcribed locally</span>}
       </div>
       <span className="bubble__time">{clock(row.createdAt)}</span>
     </div>
   );
 });
+
+/** An assistant (or other bot's) turn: plain text on the pane, no card. */
+const AgentText = memo(function AgentText({ row }: { row: Row }) {
+  const b = row.body as MessageBody;
+  return (
+    <div className={`agent-text${b.streaming ? ' is-streaming' : ''}`}>
+      <Markdown text={b.text || ' '} />
+      <Citations b={b} />
+    </div>
+  );
+});
+
+/** Under an assistant turn: avatar, name, and how long the work before it took. */
+function AgentMeta({ bot, from, worked, ts }: { bot: Bot; from?: MessageBody['from']; worked: number | null; ts: number }) {
+  const sender = useStore((s) => (from?.kind === 'bot' ? s.bots.find((b) => b.id === from.id) : undefined)) ?? bot;
+  const name = from && from.kind !== 'bot' ? from.name : sender.name;
+  return (
+    <div className="agent-meta">
+      <BotAvatarFor bot={sender} size={18} />
+      <b>{name}</b>
+      {worked !== null && <><span className="agent-meta__sep" aria-hidden>·</span><span>Worked for {duration(worked)}</span></>}
+      <span className="agent-meta__sep" aria-hidden>·</span>
+      <span className="agent-meta__time">{clock(ts)}</span>
+    </div>
+  );
+}
 
 function SenderLabel({ from }: { from: NonNullable<MessageBody['from']> }) {
   const bot = useStore((s) => (from.kind === 'bot' ? s.bots.find((b) => b.id === from.id) : undefined));
@@ -246,7 +282,7 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
     <div className="transcript" ref={scrollRef} onScroll={onScroll}>
       <div className="transcript__col">
         {loaded && rows.length === 0 && <EmptyChat bot={bot} />}
-        {items.map((it) => {
+        {items.map((it, idx) => {
           switch (it.kind) {
             case 'divider':
               return <div key={it.key} className="divider">{dividerLabel(it.ts)}</div>;
@@ -254,15 +290,27 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
               return <Steps key={it.key} item={it} active={it.key === activeKey} open={it.key === openKey} extra={extraSteps} />;
             case 'row':
               return <SystemRow key={it.key} row={it.row} />;
-            case 'group':
+            case 'group': {
+              if (it.side === 'right') {
+                return (
+                  <div key={it.key} className="group is-right">
+                    {it.rows.map((r, i) => (
+                      <Fragment key={r.seq}><Bubble row={r} pos={cornerClass(i, it.rows.length)} /></Fragment>
+                    ))}
+                  </div>
+                );
+              }
+              const prev = items[idx - 1];
+              const worked = prev?.kind === 'steps' && prev.key !== openKey ? workedMs(prev) : null;
+              const lastRow = it.rows[it.rows.length - 1];
               return (
-                <div key={it.key} className={`group is-${it.side}`}>
-                  {it.from && <SenderLabel from={it.from} />}
-                  {it.rows.map((r, i) => (
-                    <Fragment key={r.seq}><Bubble row={r} side={it.side} pos={cornerClass(i, it.rows.length)} /></Fragment>
-                  ))}
+                <div key={it.key} className="group is-left">
+                  {it.from && it.from.kind !== 'bot' && <SenderLabel from={it.from} />}
+                  {it.rows.map((r) => <AgentText key={r.seq} row={r} />)}
+                  <AgentMeta bot={bot} from={it.from} worked={worked} ts={lastRow.createdAt} />
                 </div>
               );
+            }
           }
         })}
         {showActivity && live && <ThinkingBlock bot={bot} live={live} rows={rows} steps={openKey ? 0 : serverSteps} />}

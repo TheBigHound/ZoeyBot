@@ -2,12 +2,23 @@ import { Composio } from '@composio/core';
 import { OpenAIResponsesProvider } from '@composio/openai';
 import { db } from './db.js';
 import { env } from './env.js';
+import { HTTPException } from 'hono/http-exception';
 import type { Toolkit } from './types.js';
 
-export const composio = new Composio({ apiKey: env.composioKey, provider: new OpenAIResponsesProvider() });
+function requireComposio(): void {
+  if (!env.composioKey) {
+    const message = 'COMPOSIO_API_KEY is not configured; app connections are unavailable in local VM mode';
+    throw new HTTPException(503, { message, res: new Response(JSON.stringify({ error: message }), { status: 503, headers: { 'content-type': 'application/json' } }) });
+  }
+}
+
+export const composio: Composio<OpenAIResponsesProvider> = env.composioKey
+  ? new Composio({ apiKey: env.composioKey, provider: new OpenAIResponsesProvider() })
+  : new Proxy({} as Composio<OpenAIResponsesProvider>, { get() { requireComposio(); } });
 
 const REST = 'https://backend.composio.dev/api/v3.1';
 async function rest<T = any>(path: string): Promise<T> {
+  requireComposio();
   const res = await fetch(`${REST}${path}`, { headers: { 'x-api-key': env.composioKey } });
   if (!res.ok) throw new Error(`Composio ${path}: ${res.status} ${await res.text()}`);
   return res.json() as Promise<T>;
@@ -132,12 +143,13 @@ export async function startGoogleLogin(provisionalUserId: string, callbackUrl: s
   return { redirectUrl: req.redirectUrl as string, connectedAccountId: req.id as string | undefined };
 }
 
-export async function googleProfile(connectedAccountId: string): Promise<{ email: string; name?: string }> {
+export async function googleProfile(userId: string, connectedAccountId: string): Promise<{ email: string; name?: string }> {
   const r: any = await composio.tools.proxyExecute({
     endpoint: 'https://gmail.googleapis.com/gmail/v1/users/me/profile',
     method: 'GET',
     connectedAccountId,
-  } as any);
+    userId,
+  });
   const data = r?.data ?? r;
   const email = data?.emailAddress ?? data?.email;
   if (!email) throw new Error(`Could not read Google profile: ${JSON.stringify(r).slice(0, 300)}`);

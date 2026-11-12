@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, LiveState, Routine, Row, Toolkit, User } from '@shared/types';
+import type { Bot, ChannelsStatus, ComputerState, LiveState, Routine, Row, Toolkit, User } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -54,6 +54,8 @@ export const api = {
   roomMembers: (id: string) => req<{ members: RoomMember[] }>('GET', `/rooms/${id}/members`),
   setRoomMembers: (id: string, botIds: string[]) => req<{ ok: true; members: string[] }>('PUT', `/rooms/${id}/members`, { botIds }),
   createRoom: (name: string, botIds: string[]) => req<{ id: string }>('POST', '/rooms', { name, botIds }),
+
+  channels: () => req<ChannelsStatus>('GET', '/channels'),
 };
 
 /** Open a Composio redirect in a centered popup. */

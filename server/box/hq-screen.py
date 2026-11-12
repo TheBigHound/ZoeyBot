@@ -35,7 +35,8 @@ sys.path.insert(0, HERE)
 import hqlib  # noqa: E402
 from hqlib import ROOT, JOBS, EXT, LOGS  # noqa: E402
 
-POLICY_DIRS = ('/etc/opt/chrome/policies/managed', '/etc/chromium/policies/managed')
+POLICY_DIRS = ('/etc/opt/chrome/policies/managed', '/etc/chromium/policies/managed',
+               '/etc/chromium-browser/policies/managed')
 POLICY_NAME = 'hq.json'
 GTK_SETTINGS = os.path.expanduser('~/.config/gtk-3.0/settings.ini')
 
@@ -283,7 +284,9 @@ def write_policy(ext_id, warnings):
     text = json.dumps(policy, indent=2) + '\n'
     wrote = []
     for folder in POLICY_DIRS:
-        if folder != POLICY_DIRS[0] and not os.path.isdir(os.path.dirname(os.path.dirname(folder))):
+        # Ubuntu's confined Chromium reads only chromium-browser/policies, which may not exist yet.
+        snap_policy = folder == POLICY_DIRS[-1] and os.path.isdir('/snap/chromium/current')
+        if folder != POLICY_DIRS[0] and not snap_policy and not os.path.isdir(os.path.dirname(os.path.dirname(folder))):
             continue
         path = os.path.join(folder, POLICY_NAME)
         try:

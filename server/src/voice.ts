@@ -13,8 +13,18 @@ import { enqueue } from './agent/loop.js';
 import { computerState } from './computer.js';
 import type { ActivityKind, EventBody, MessageBody, RowBody, VoiceCallRecord, VoiceOption } from './types.js';
 import { listMemories } from './engine-memory.js';
+import { voiceMode, localVoiceOptions, synthesizeLocal, transcribeLocal } from './local-voice.js';
+import { bodyLimit } from 'hono/body-limit';
 
 export const voiceApi = new Hono<AuthVars>();
+voiceApi.use('/preview', bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json({ error: 'Speech request too large' }, 413) }));
+voiceApi.use('/stt', bodyLimit({ maxSize: 25 * 1024 * 1024 + 16 * 1024, onError: (c) => c.json({ error: 'Recording too long' }, 413) }));
+voiceApi.use('*', async (c, next) => {
+  if (voiceMode() === 'local' && ['/session', '/tool', '/end'].some((p) => c.req.path.endsWith(p))) {
+    return c.json({ error: 'Live and turn-based voice calls are not supported by local voice. Use local preview or microphone dictation in chat.', provider: 'local' }, 501);
+  }
+  await next();
+});
 
 const XAI = 'https://api.x.ai/v1';
 const VOICE_MODEL = process.env.XAI_VOICE_MODEL ?? 'grok-voice-latest';
@@ -235,7 +245,7 @@ const fmtDuration = (ms: number) => {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 };
 
-voiceApi.get('/options', async (c) => c.json({ voices: await listVoices(), languages: LANGUAGES, speeds: SPEEDS }));
+voiceApi.get('/options', async (c) => c.json(voiceMode() === 'local' ? await localVoiceOptions() : { provider: 'xai', capabilities: { tts: true, stt: true, realtime: true, calls: true }, voices: await listVoices(), languages: LANGUAGES, speeds: SPEEDS }));
 
 voiceApi.post('/session', async (c) => {
   const user = c.get('user');
@@ -357,12 +367,13 @@ voiceApi.post('/tool', async (c) => {
   }
 });
 
-const xai = new OpenAI({ apiKey: env.xaiKey, baseURL: XAI, timeout: 45_000 });
+let xai: OpenAI | undefined;
+const xaiClient = () => (xai ??= new OpenAI({ apiKey: env.xaiKey, baseURL: XAI, timeout: 45_000 }));
 
 async function summarizeCall(botName: string, transcript: { role: string; text: string }[], tasks: string[]): Promise<string | null> {
   if (!transcript.length && !tasks.length) return null;
   const lines = transcript.map((t) => `${t.role === 'user' ? 'User' : botName}: ${t.text}`).join('\n').slice(-12_000);
-  const res: any = await xai.responses.create({
+  const res: any = await xaiClient().responses.create({
     model: env.xaiModel,
     reasoning: { effort: 'low' },
     store: false,
@@ -416,6 +427,19 @@ voiceApi.post('/preview', async (c) => {
   const user = c.get('user');
   const p = await c.req.json<{ botId?: string; voice?: string; speed?: number; language?: string; text?: string; codec?: 'mp3' | 'pcm' }>().catch(() => ({} as any));
   const bot = ownBot(user.id, p.botId);
+  if (p.botId && !bot) return c.json({ error: 'not found' }, 404);
+  if (voiceMode() === 'local') {
+    const text = String(p.text ?? `Hi, I'm ${bot?.name ?? 'your Bot'}. This is how I'll sound when we talk.`);
+    if (!text.trim() || text.length > 400) return c.json({ error: 'Speech text must contain 1 to 400 characters' }, 400);
+    try {
+      const pcm = p.codec === 'pcm';
+      const audio = await synthesizeLocal(text, pcm ? 'pcm' : 'wav');
+      return c.body(new Uint8Array(audio), 200, { 'Content-Type': pcm ? `audio/pcm;rate=${SAMPLE_RATE}` : 'audio/wav', 'Cache-Control': 'no-store' });
+    } catch (e) {
+      console.warn('[voice] local TTS failed:', (e as Error).message);
+      return c.json({ error: 'Local speech unavailable. Check Ollama phonon/Zoey and ffmpeg; no cloud fallback was used.' }, 503);
+    }
+  }
   const s = bot ? settingsOf(bot) : { voice: 'luna', speed: 1, language: 'auto' };
   const voice = String(p.voice || s.voice).slice(0, 80);
   const language = p.language && langName(p.language) ? p.language : s.language;
@@ -443,6 +467,16 @@ voiceApi.post('/stt', async (c) => {
   if (!file || typeof file === 'string') return c.json({ error: 'file required' }, 400);
   if (file.size > 25 * 1024 * 1024) return c.json({ error: 'recording too long' }, 413);
   if (file.size < 200) return c.json({ text: '' });
+  if (voiceMode() === 'local') {
+    const language = String(form?.get('language') || 'auto');
+    if (language !== 'auto' && !/^[a-z]{2}(?:-[A-Z]{2})?$/.test(language)) return c.json({ error: 'Invalid language' }, 400);
+    try {
+      return c.json({ text: await transcribeLocal(Buffer.from(await file.arrayBuffer()), language) });
+    } catch (e) {
+      console.warn('[voice] local STT failed:', (e as Error).message);
+      return c.json({ error: 'Local transcription unavailable or recording invalid. Requires cached Whisper and at most 120 seconds of audio; no cloud fallback was used.' }, 503);
+    }
+  }
   const out = new FormData();
   out.append('model', STT_MODEL);
   const lang = String(form?.get('language') ?? '');

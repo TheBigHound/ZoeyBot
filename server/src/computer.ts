@@ -131,10 +131,14 @@ function saveSize(botId: string, s: OrgoScreen | undefined) {
 }
 
 /** This bot's screen on the shared computer; leases one the first time. */
+let leaseQueue: Promise<unknown> = Promise.resolve();
+
 export function screenFor(userId: string, botId: string): Promise<BotScreen> {
   const running = leasing.get(botId);
   if (running) return running;
-  const p = lease(userId, botId).finally(() => leasing.delete(botId));
+  // Allocation is global to the shared computer: two bots must not reuse one free screen.
+  const p = leaseQueue.then(() => lease(userId, botId)).finally(() => leasing.delete(botId));
+  leaseQueue = p.catch(() => undefined);
   leasing.set(botId, p);
   return p;
 }
@@ -220,7 +224,7 @@ export async function screenForWork(userId: string, botId: string): Promise<void
     return;
   }
   const s = await readyScreen(userId, botId);
-  if (!env.localBox) return;
+  if (!env.localBox && !env.vmBox) return;
   const alive = await fetch(`${cdpUrlFor(botId, s.screenId)}/json/version`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok, () => false);
   if (!alive) await readyScreen(userId, botId, { redress: true });
 }

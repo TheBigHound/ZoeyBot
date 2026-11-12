@@ -8,6 +8,7 @@ import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
 import type { EngineInfo, EngineProvider } from './types.js';
+import { ollamaChatModels, sshWrapper, vmEngineSettings } from './engine-runtime.js';
 
 /**
  * Every bot is run by a Hermes agent.
@@ -73,7 +74,7 @@ const homeFor = (botId: string) => path.join(env.enginesDir, botId);
 let cachedPrimaryKey: string | null = null;
 function primaryKey(): string {
   if (env.hermesKey) return env.hermesKey;
-  if (cachedPrimaryKey === null) cachedPrimaryKey = readDotenv(path.join(env.hermesHome, '.env')).API_SERVER_KEY ?? '';
+  if (!cachedPrimaryKey) cachedPrimaryKey = readDotenv(path.join(env.hermesHome, '.env')).API_SERVER_KEY ?? '';
   return cachedPrimaryKey;
 }
 
@@ -143,7 +144,7 @@ function extraMcpServers(): Record<string, any> {
 }
 
 /** Create or refresh the home. config.yaml is created once; after that only the keys we own are patched. */
-async function writeHome(botId: string): Promise<{ home: string; key: string; display: string | null }> {
+export async function writeHome(botId: string): Promise<{ home: string; key: string; display: string | null }> {
   const b = botRow(botId);
   const home = homeFor(botId);
   fs.mkdirSync(path.join(home, 'logs'), { recursive: true });
@@ -168,7 +169,7 @@ async function writeHome(botId: string): Promise<{ home: string; key: string; di
 
   const cfgFile = path.join(home, 'config.yaml');
   const fresh = !fs.existsSync(cfgFile);
-  const cfg = fresh ? {} : readYaml(cfgFile);
+  let cfg = fresh ? {} : readYaml(cfgFile);
   if (fresh) {
     const primary = readYaml(path.join(env.hermesHome, 'config.yaml'));
     for (const k of SHARED_CONFIG) if (primary[k] !== undefined) cfg[k] = primary[k];
@@ -180,9 +181,28 @@ async function writeHome(botId: string): Promise<{ home: string; key: string; di
   cfg.mcp_servers = {
     ...(cfg.mcp_servers ?? {}),
     ...extraMcpServers(),
-    hq: { url: `${env.mcpBaseUrl}/mcp/${botId}`, headers: { Authorization: `Bearer ${mcpToken(botId)}` }, timeout: 1800, connect_timeout: 30 },
+    hq: { url: `${env.mcpBaseUrl}/mcp/${botId}`, headers: { Authorization: 'Bearer ${HQ_MCP_TOKEN}' }, timeout: 1800, connect_timeout: 30 },
   };
-  writePrivate(cfgFile, YAML.stringify(cfg));
+  cfg.platforms = { ...(cfg.platforms ?? {}), api_server: { enabled: true, extra: { host: '127.0.0.1', port: b.engine_port } } };
+  if (env.vmBox) {
+    cfg = vmEngineSettings(cfg, { host: env.vmHost, port: env.vmPort, user: env.vmUser, key: env.vmKey });
+    for (const tool of ['ssh', 'scp'] as const) {
+      const file = path.join(home, 'bin', tool);
+      writePrivate(file, sshWrapper(tool, env.vmKnownHosts));
+      fs.chmodSync(file, 0o700);
+    }
+  }
+  // Use Hermes' validator/migration-aware writer, not hand-written YAML. Existing model choices stay intact.
+  for (const k of (fresh ? Object.keys(cfg) : ['platform_toolsets', 'terminal', 'browser', 'mcp_servers', 'platforms'])) {
+    if (cfg[k] === undefined) continue;
+    await new Promise<void>((resolve, reject) => {
+      execFile(env.hermesBin, ['config', 'set', '--force', k, JSON.stringify(cfg[k])], {
+        env: { PATH: process.env.PATH, HOME: process.env.HOME, USER: process.env.USER, HERMES_HOME: home },
+        timeout: 600_000,
+      }, (err, _stdout, stderr) => err ? reject(new Error(`Hermes config ${k}: ${stderr || err.message}`)) : resolve());
+    });
+  }
+  if (fs.existsSync(cfgFile)) fs.chmodSync(cfgFile, 0o600);
 
   if (!fs.existsSync(path.join(home, 'SOUL.md'))) fs.writeFileSync(path.join(home, 'SOUL.md'), soul(b));
 
@@ -199,10 +219,12 @@ async function writeHome(botId: string): Promise<{ home: string; key: string; di
   const primaryEnv = readDotenv(path.join(env.hermesHome, '.env'));
   const vars: Record<string, string> = { ...mine };
   for (const k of SHARED_ENV) {
+    if (env.vmBox) continue; // Local engines never silently inherit host/cloud credentials.
     const v = primaryEnv[k] ?? process.env[k];
     if (v && !vars[k]) vars[k] = v;
   }
-  Object.assign(vars, { API_SERVER_ENABLED: 'true', API_SERVER_KEY: key, API_SERVER_PORT: String(b.engine_port), API_SERVER_HOST: '127.0.0.1' });
+  for (const k of ['API_SERVER_ENABLED', 'API_SERVER_PORT', 'API_SERVER_HOST']) delete vars[k];
+  Object.assign(vars, { API_SERVER_KEY: key, HQ_MCP_TOKEN: mcpToken(botId) });
   if (cdp) vars.BROWSER_CDP_URL = cdp; else delete vars.BROWSER_CDP_URL;
   writePrivate(envFile, Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n');
 
@@ -279,6 +301,17 @@ function managedKey(botId: string): string {
   return k;
 }
 
+function vmHomeSafe(home: string): boolean {
+  if (!env.vmBox) return true;
+  const c = readYaml(path.join(home, 'config.yaml'));
+  const t = c.terminal;
+  const tools = c.platform_toolsets?.api_server;
+  return t?.backend === 'ssh' && t.ssh_host === env.vmHost && Number(t.ssh_port) === env.vmPort
+    && t.ssh_user === env.vmUser && t.ssh_key === env.vmKey
+    && Array.isArray(tools) && tools.length > 0 && tools.every((v: string) => ['terminal', 'file', 'todo'].includes(v))
+    && fs.existsSync(path.join(home, 'bin', 'ssh')) && fs.existsSync(path.join(home, 'bin', 'scp'));
+}
+
 async function startGateway(botId: string): Promise<void> {
   const b = botRow(botId);
   if (!b || b.engine !== 'managed') throw new Error('not a managed engine');
@@ -286,7 +319,7 @@ async function startGateway(botId: string): Promise<void> {
   const url = managedUrl(botId);
 
   // A gateway from an earlier run of this server is still good: use it as it is.
-  if ((await healthy(url)) && managedKey(botId) && (await keyAccepted(url, managedKey(botId)))) return;
+  if (vmHomeSafe(homeFor(botId)) && (await healthy(url)) && managedKey(botId) && (await keyAccepted(url, managedKey(botId)))) return;
   if (await healthy(url)) {
     if (gatewayPid(homeFor(botId))) await stopGateway(botId);
     else throw new Error(`Port ${botRow(botId).engine_port} is taken by something else.`);
@@ -303,7 +336,7 @@ async function startGateway(botId: string): Promise<void> {
     stdio: ['ignore', log, log],
     // Only what the agent needs. None of this server's secrets, and nothing of the primary agent's messaging.
     env: {
-      PATH: process.env.PATH ?? '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+      PATH: `${path.join(home, 'bin')}:${process.env.PATH ?? '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'}`,
       HOME: process.env.HOME ?? '/root',
       USER: process.env.USER ?? 'root',
       LANG: process.env.LANG ?? 'C.UTF-8',
@@ -359,9 +392,12 @@ export async function engineFor(botId: string): Promise<Engine> {
     if (b.kind === 'room') throw new Error('A group chat has no agent of its own.');
     kind = assignEngine(botId);
   }
-  if (kind === 'primary') return { kind, url: env.hermesUrl, key: primaryKey(), home: env.hermesHome };
+  if (kind === 'primary') {
+    if (!vmHomeSafe(env.hermesHome)) throw new Error('VM engine requires isolated SSH configuration and guest-only toolsets; refusing host execution.');
+    return { kind, url: env.hermesUrl, key: primaryKey(), home: env.hermesHome };
+  }
   const url = managedUrl(botId);
-  if (!(await healthy(url, 1500)) || !managedKey(botId)) await ensureManaged(botId);
+  if (!vmHomeSafe(homeFor(botId)) || !(await healthy(url, 1500)) || !managedKey(botId)) await ensureManaged(botId);
   return { kind, url, key: managedKey(botId), home: homeFor(botId) };
 }
 
@@ -441,7 +477,7 @@ export function initEngines() {
 // ---------- what the settings panel shows ----------
 
 /** Providers worth showing even when not signed in. */
-const WELL_KNOWN = ['anthropic', 'openai-codex', 'xai-oauth', 'xai', 'openrouter', 'nous', 'gemini', 'openai-api'];
+const WELL_KNOWN = ['ollama', 'anthropic', 'openai-codex', 'xai-oauth', 'xai', 'openrouter', 'nous', 'gemini', 'openai-api'];
 
 const optionsCache = new Map<string, { at: number; data: any }>();
 
@@ -452,17 +488,22 @@ async function modelOptions(botId: string, e: { url: string; key: string }): Pro
     const r = await fetch(`${e.url}/api/model/options`, { headers: e.key ? { Authorization: `Bearer ${e.key}` } : {}, signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
     const data = await r.json();
+    for (const provider of data.providers ?? []) {
+      if (provider.slug !== 'ollama' || !Array.isArray(provider.models)) continue;
+      const chat = await ollamaChatModels(provider.api_url ?? '', provider.models);
+      if (chat !== null) provider.chat_models = chat;
+    }
     optionsCache.set(botId, { at: Date.now(), data });
     return data;
   } catch { return null; }
 }
 
-function toProviders(data: any): EngineProvider[] {
+export function toProviders(data: any): EngineProvider[] {
   const list: any[] = Array.isArray(data?.providers) ? data.providers : [];
   const out = list
     .filter((p) => p?.slug && (p.authenticated || WELL_KNOWN.includes(p.slug)))
     .map((p): EngineProvider => {
-      const featured = Array.isArray(p.featured_models) && p.featured_models.length ? p.featured_models : Array.isArray(p.models) ? p.models : [];
+      const featured = Array.isArray(p.chat_models) ? p.chat_models : Array.isArray(p.featured_models) && p.featured_models.length ? p.featured_models : Array.isArray(p.models) ? p.models : [];
       return {
         id: String(p.slug),
         name: p.slug === 'anthropic' ? 'Claude (Anthropic)' : String(p.name ?? p.slug),

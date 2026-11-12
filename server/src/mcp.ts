@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
+import { env } from './env.js';
+import { VM_AGENT_TOOLS, vmAgentTools, type VmCallResult } from './vm-agent-tools.js';
 import { getBotRow } from './store.js';
 import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
@@ -23,7 +26,7 @@ const SKIPPED = 'Skipped: the user did not approve this (they sent a new message
 
 const SUPPORTED = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
-interface CallResult { content: { type: 'text'; text: string }[]; isError?: boolean }
+type CallResult = VmCallResult;
 const text = (t: string, isError = false): CallResult => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) });
 
 function sameToken(a: string, b: string) {
@@ -41,11 +44,11 @@ function caller(slug: string, auth: string | undefined): { botId: string | null 
 }
 
 async function listTools(botId: string | null) {
-  const own = TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters }));
+  const own = [...TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters })), ...(env.vmBox ? VM_AGENT_TOOLS : [])];
   const bot = botId ? getBotRow(botId) : null;
   if (!bot) return own;
   const apps = (await composioTools(bot.user_id))
-    .filter((t: any) => t?.type === 'function' && typeof t.name === 'string' && !toolMap.has(t.name))
+    .filter((t: any) => t?.type === 'function' && typeof t.name === 'string' && !toolMap.has(t.name) && !(env.vmBox && VM_AGENT_TOOLS.some(own => own.name.toLowerCase() === t.name.toLowerCase())))
     .map((t: any) => ({ name: t.name as string, description: String(t.description ?? ''), inputSchema: t.parameters ?? { type: 'object', properties: {} } }));
   return [...own, ...apps];
 }
@@ -54,10 +57,16 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
   const bot = botId ? getBotRow(botId) : null;
   if (!botId || !bot) return text('The team app has no bot for this agent yet. Ask the user to open the app once, then try again.', true);
   const userId: string = bot.user_id;
-  const name = [...toolMap.keys()].find((k) => k.toLowerCase() === rawName.toLowerCase()) ?? rawName;
+  const vmTool = env.vmBox ? VM_AGENT_TOOLS.find(t => t.name.toLowerCase() === rawName.toLowerCase()) : undefined;
+  const name = vmTool?.name ?? [...toolMap.keys()].find((k) => k.toLowerCase() === rawName.toLowerCase()) ?? rawName;
   const rowSeq = await claimToolRow(botId, name);
   const ctx: ToolCtx = { userId, botId, enqueueBotMessage, depth: turnDepth(botId) };
   try {
+    if (vmTool) {
+      const result = await vmAgentTools.call(name, args, { userId, botId });
+      noteToolOutcome(botId, rowSeq, { status: result.isError ? 'error' : 'done', summary: `${name}: ${String(args?.action ?? '').slice(0, 40)}` });
+      return result;
+    }
     const own = toolMap.get(name);
     if (own) {
       const r = await own.impl(args, ctx);
@@ -131,6 +140,9 @@ async function handle(msg: any, botId: string | null): Promise<object | null> {
 }
 
 export const mcpApi = new Hono();
+// VM calls are small typed requests; leave existing cloud-mode transport untouched.
+const vmBodyLimit = bodyLimit({ maxSize: 1024 * 1024 });
+mcpApi.use('/:bot', (c, next) => env.vmBox ? vmBodyLimit(c, next) : next());
 
 mcpApi.post('/:bot', async (c) => {
   const who = caller(c.req.param('bot'), c.req.header('authorization'));
@@ -138,6 +150,7 @@ mcpApi.post('/:bot', async (c) => {
   let body: any;
   try { body = await c.req.json(); } catch { return c.json(rpcError(null, -32700, 'Parse error'), 400); }
   if (Array.isArray(body)) {
+    if (env.vmBox && body.length > 16) return c.json(rpcError(null, -32600, 'At most 16 requests per VM MCP batch'), 400);
     const answers = (await Promise.all(body.map((m) => handle(m, who.botId)))).filter(Boolean);
     return answers.length ? c.json(answers) : c.body(null, 202);
   }

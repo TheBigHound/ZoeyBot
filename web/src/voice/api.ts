@@ -15,7 +15,19 @@ export interface VoiceSession {
   session: Record<string, unknown>;
 }
 
-export interface VoiceOptions { voices: VoiceOption[]; languages: { code: string; name: string }[]; speeds: number[] }
+export interface VoiceOptions {
+  provider: 'local' | 'xai';
+  capabilities: { tts: boolean; stt: boolean; realtime: boolean; calls: boolean };
+  callDisabledReason?: string;
+  voices: VoiceOption[];
+  languages: { code: string; name: string }[];
+  speeds: number[];
+}
+
+export async function ensureCallSupported(): Promise<void> {
+  const options = await voiceApi.options();
+  if (!options.capabilities?.calls) throw new Error(options.callDisabledReason || 'Voice calls are unavailable for this provider.');
+}
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`/api/voice${path}`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -43,7 +55,11 @@ export const voiceApi = {
   },
   async preview(p: { botId: string; voice?: string; speed?: number; language?: string; text?: string }): Promise<Int16Array> {
     const res = await fetch('/api/voice/preview', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...p, codec: 'pcm' }) });
-    if (!res.ok) throw new Error('Preview unavailable');
+    if (!res.ok) {
+      let message = 'Preview unavailable';
+      try { message = ((await res.json()) as { error?: string }).error || message; } catch { /* not JSON */ }
+      throw new Error(message);
+    }
     const buf = await res.arrayBuffer();
     return new Int16Array(buf, 0, buf.byteLength >> 1);
   },

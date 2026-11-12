@@ -6,9 +6,12 @@ import { endCall, isCallActive, previewVoice, startCall, useVoice } from '../voi
 import { Icon } from './Icon';
 
 const FALLBACK: VoiceOptions = {
-  voices: ['ara', 'eve', 'leo', 'luna', 'rex', 'sal'].map((id) => ({ id, name: id[0].toUpperCase() + id.slice(1) })),
-  languages: [{ code: 'auto', name: 'Auto-detect' }, { code: 'en', name: 'English' }],
-  speeds: [0.7, 0.85, 1, 1.15, 1.3, 1.5],
+  provider: 'local',
+  capabilities: { tts: false, stt: false, realtime: false, calls: false },
+  callDisabledReason: 'Voice capabilities are loading or unavailable.',
+  voices: [],
+  languages: [{ code: 'auto', name: 'Model default' }],
+  speeds: [1],
 };
 
 const speedLabel = (s: number) => `${Number(s.toFixed(2))}x`;
@@ -65,29 +68,32 @@ export function VoiceSettings({ bot }: { bot: Bot }) {
     finally { setPreviewing(false); }
   };
 
-  const voices = opts.voices.some((v) => v.id === bot.voice) ? opts.voices : [{ id: bot.voice, name: bot.voice }, ...opts.voices];
-  const speeds = opts.speeds.includes(bot.voiceSpeed) ? opts.speeds : [...opts.speeds, bot.voiceSpeed].sort((a, b) => a - b);
+  const local = opts.provider === 'local';
+  const voices = local || opts.voices.some((v) => v.id === bot.voice) ? opts.voices : [{ id: bot.voice, name: bot.voice }, ...opts.voices];
+  const speeds = local || opts.speeds.includes(bot.voiceSpeed) ? opts.speeds : [...opts.speeds, bot.voiceSpeed].sort((a, b) => a - b);
+  const selectedVoice = local ? opts.voices[0]?.id ?? 'Loading…' : bot.voice;
 
   return (
     <div className="panel-card">
       <div className="panel-row panel-row--setting">
         <span>Voice</span>
         <span className="voice-setting__right">
-          <button type="button" className="voice-preview" onClick={preview} disabled={previewing} title={`Hear ${bot.name}'s voice`}>{previewing ? 'Playing…' : 'Preview'}</button>
-          <NativeSelect label="Voice" value={bot.voice} options={voices.map((v) => ({ value: v.id, label: v.name }))} onChange={(voice) => save({ voice })} />
+          <button type="button" className="voice-preview" onClick={preview} disabled={previewing || !opts.capabilities.tts} title={`Hear ${bot.name}'s voice`}>{previewing ? 'Playing…' : 'Preview'}</button>
+          <NativeSelect label="Voice" value={selectedVoice} options={voices.map((v) => ({ value: v.id, label: v.name }))} onChange={(voice) => save({ voice })} />
         </span>
       </div>
       <div className="panel-row panel-row--setting">
         <span>Speed</span>
-        <NativeSelect label="Speed" value={bot.voiceSpeed} options={speeds.map((s) => ({ value: s, label: speedLabel(s) }))} onChange={(voiceSpeed) => save({ voiceSpeed })} />
+        <NativeSelect label="Speed" value={local ? 1 : bot.voiceSpeed} options={speeds.map((s) => ({ value: s, label: speedLabel(s) }))} onChange={(voiceSpeed) => save({ voiceSpeed })} />
       </div>
       <div className="panel-row panel-row--setting">
         <span>Language</span>
-        <NativeSelect label="Language" value={bot.voiceLanguage} options={opts.languages.map((l) => ({ value: l.code, label: l.name }))} onChange={(voiceLanguage) => save({ voiceLanguage })} />
+        <NativeSelect label="Language" value={local ? 'auto' : bot.voiceLanguage} options={opts.languages.map((l) => ({ value: l.code, label: l.name }))} onChange={(voiceLanguage) => save({ voiceLanguage })} />
       </div>
-      <button type="button" className={`panel-row panel-row--action panel-row--call${inCall ? ' is-active' : ''}`} onClick={() => (inCall ? endCall() : startCall(bot.id))}>
-        <Icon name="voice_a" size={14} opacity={inCall ? 1 : 0.56} /> {inCall ? 'End voice chat' : 'Start voice chat'}
+      <button type="button" className={`panel-row panel-row--action panel-row--call${inCall ? ' is-active' : ''}`} disabled={!inCall && !opts.capabilities.calls} title={opts.callDisabledReason} onClick={() => (inCall ? endCall() : startCall(bot.id))}>
+        <Icon name="voice_a" size={14} opacity={inCall ? 1 : 0.56} /> {inCall ? 'End voice chat' : opts.capabilities.calls ? 'Start voice chat' : 'Voice calls unavailable'}
       </button>
+      {local && <div className="voice-error">Local Zoey speech preview · {opts.capabilities.stt ? 'Local microphone dictation available.' : 'Local transcription unavailable.'} {opts.callDisabledReason}</div>}
       {error && <div className="voice-error">{error}</div>}
     </div>
   );

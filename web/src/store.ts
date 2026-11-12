@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Bot, ComputerState, LiveState, Routine, Row, ServerEvent, User } from '@shared/types';
 import { api } from './lib/api';
+import { publishLiveRows } from './lib/liveRows';
 
 export type ModalKind = 'create' | 'search' | 'apps' | 'group' | null;
 
@@ -143,9 +144,17 @@ export const useStore = create<State>((set, get) => ({
       case 'hello':
       case 'ping':
         return;
-      case 'rows':
+      case 'rows': {
+        const previous = s.transcripts[ev.botId];
+        // History refreshes can race with SSE replay. A known finalized reply is never new speech.
+        const fresh = ev.rows.filter((row) => {
+          const current = previous?.generation === ev.generation ? previous.bySeq[row.seq] : undefined;
+          return !current || (row.updatedSeq >= current.updatedSeq && !(current.body.type === 'message' && current.body.role === 'assistant' && !current.body.streaming));
+        });
         s.upsertRows(ev.botId, ev.generation, ev.rows);
+        publishLiveRows(ev.botId, ev.generation, fresh);
         return;
+      }
       case 'cleared':
         set((st) => ({ transcripts: { ...st.transcripts, [ev.botId]: { generation: ev.generation, bySeq: {}, loaded: true } } }));
         return;

@@ -4,7 +4,7 @@
 import { create } from 'zustand';
 import type { Row } from '@shared/types';
 import { sortedRows, useStore } from '../store';
-import { voiceApi, type VoiceSession } from './api';
+import { voiceApi, ensureCallSupported, type VoiceSession } from './api';
 import { MicCapture, PcmPlayer, base64ToPcm, createAudioContext, micErrorMessage, openMic, pcmToBase64 } from './audio';
 
 export interface Caption { id: string; role: 'user' | 'assistant'; text: string; final: boolean }
@@ -98,6 +98,8 @@ class VoiceCall {
     window.addEventListener('pagehide', this.onUnload);
     let stream: MediaStream;
     try {
+      await ensureCallSupported();
+      if (this.ended) return;
       stream = await openMic();
     } catch (e) {
       this.end(micErrorMessage(e));

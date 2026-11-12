@@ -19,17 +19,27 @@ function secret(name: string): string {
 
 const hermesHome = process.env.HERMES_HOME_PRIMARY ?? path.join(os.homedir(), '.hermes');
 
+const vmBox = process.env.HQ_VM === '1';
+if (vmBox && process.env.HQ_LOCAL === '1') throw new Error('HQ_VM and HQ_LOCAL are mutually exclusive');
+
 export const env = {
+  vmBox,
+  hostname: vmBox ? '127.0.0.1' : (process.env.HOST ?? '0.0.0.0'),
+  vmHost: process.env.HQ_VM_HOST ?? '127.0.0.1',
+  vmPort: Number(process.env.HQ_VM_PORT ?? 2222),
+  vmUser: process.env.HQ_VM_USER ?? 'bot',
+  vmKey: process.env.HQ_VM_KEY ?? path.join(os.homedir(), '.ssh/bot-hq-utm'),
+  vmKnownHosts: process.env.HQ_VM_KNOWN_HOSTS ?? new URL('../../data/vm-known-hosts', import.meta.url).pathname,
   port: Number(process.env.PORT ?? 8787),
   appUrl: process.env.APP_URL ?? 'http://localhost:5173',
   /** Public URL of this server, used for OAuth callbacks. */
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
-  xaiKey: req('XAI_API_KEY'),
+  xaiKey: vmBox ? (process.env.XAI_API_KEY ?? '') : req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
-  composioKey: req('COMPOSIO_API_KEY'),
-  orgoKey: secret('ORGO_API_KEY'),
+  composioKey: vmBox ? (process.env.COMPOSIO_API_KEY ?? '') : req('COMPOSIO_API_KEY'),
+  orgoKey: vmBox ? '' : secret('ORGO_API_KEY'),
   sessionSecret: req('SESSION_SECRET'),
-  devLogin: process.env.DEV_LOGIN === '1',
+  devLogin: vmBox || process.env.DEV_LOGIN === '1',
   dbPath: process.env.DB_PATH ?? new URL('../../data/grokbot.db', import.meta.url).pathname,
 
   // ---- Hermes engine ----
@@ -51,7 +61,7 @@ export const env = {
 
   // ---- the one shared computer ----
   /** The Orgo computer every bot works on (one screen each). Empty = legacy one-box-per-user mode is not supported. */
-  orgoComputerId: process.env.ORGO_COMPUTER_ID ?? '',
+  orgoComputerId: vmBox ? 'utm-local' : (process.env.ORGO_COMPUTER_ID ?? ''),
   /** This server runs on that computer, so shell commands run locally instead of through Orgo's API. */
   localBox: process.env.HQ_LOCAL === '1',
   /**

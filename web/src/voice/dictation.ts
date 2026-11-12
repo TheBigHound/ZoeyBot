@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { voiceApi } from './api';
 import { micErrorMessage, openMic } from './audio';
 
-export type DictationState = 'idle' | 'recording' | 'transcribing';
+export type DictationState = 'idle' | 'starting' | 'recording' | 'transcribing';
 
 const HOLD_MS = 350;
 const MAX_MS = 120_000;
@@ -15,15 +15,23 @@ function pickMime(): string | undefined {
   return undefined;
 }
 
-export function useDictation(onText: (text: string) => void, onError: (msg: string) => void, language?: string) {
+export function useDictation(onText: (text: string) => void, onError: (msg: string) => void, language?: string, botId?: string) {
   const [state, setState] = useState<DictationState>('idle');
   const rec = useRef<{ mr: MediaRecorder; stream: MediaStream; chunks: Blob[]; downAt: number; cancelled: boolean; timer: ReturnType<typeof setTimeout> } | null>(null);
   const starting = useRef(false);
+  const generation = useRef(0);
   const toggleMode = useRef(false);
+  const pointerDownAt = useRef<number | null>(null);
   const cb = useRef({ onText, onError, language });
   cb.current = { onText, onError, language };
 
   const finish = useCallback((cancel = false) => {
+    if (cancel) {
+      generation.current++;
+      starting.current = false;
+      toggleMode.current = false;
+      setState('idle');
+    }
     const r = rec.current;
     if (!r) return;
     r.cancelled = cancel;
@@ -36,36 +44,52 @@ export function useDictation(onText: (text: string) => void, onError: (msg: stri
     if (rec.current || starting.current) return;
     if (typeof MediaRecorder === 'undefined') { cb.current.onError('Dictation isn’t supported in this browser.'); return; }
     starting.current = true;
+    setState('starting');
+    const token = generation.current;
     const downAt = Date.now();
+    let stream: MediaStream | undefined;
     try {
-      const stream = await openMic();
+      const options = await voiceApi.options();
+      if (token !== generation.current) return;
+      if (!options.capabilities.stt) throw new Error('Local transcription is unavailable. An installed Whisper model is required.');
+      stream = await openMic();
+      if (token !== generation.current) { stream.getTracks().forEach((t) => t.stop()); return; }
       const mime = pickMime();
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       const r = { mr, stream, chunks: [] as Blob[], downAt, cancelled: false, timer: setTimeout(() => finish(), MAX_MS) };
       rec.current = r;
       mr.ondataavailable = (e) => { if (e.data.size) r.chunks.push(e.data); };
+      mr.onerror = (e) => {
+        if (token !== generation.current) return;
+        finish(true);
+        cb.current.onError(micErrorMessage((e as Event & { error?: Error }).error ?? new Error('Microphone recording failed.')));
+      };
       mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
+        r.stream.getTracks().forEach((t) => t.stop());
         rec.current = null;
         toggleMode.current = false;
-        if (r.cancelled || !r.chunks.length || Date.now() - r.downAt < 250) { setState('idle'); return; }
+        // Keep complete short utterances too; stop's final dataavailable is already included.
+        if (r.cancelled || !r.chunks.length) { setState('idle'); return; }
         setState('transcribing');
         try {
           const text = await voiceApi.transcribe(new Blob(r.chunks, { type: mr.mimeType || mime || 'audio/webm' }), cb.current.language);
-          if (text) cb.current.onText(text);
+          if (token === generation.current && text) cb.current.onText(text);
         } catch (e) {
-          cb.current.onError((e as Error).message || 'Transcription failed');
+          if (token === generation.current) cb.current.onError((e as Error).message || 'Transcription failed');
         } finally {
-          setState('idle');
+          if (token === generation.current) setState('idle');
         }
       };
       mr.start(250);
       setState('recording');
     } catch (e) {
+      stream?.getTracks().forEach((t) => t.stop());
+      if (token !== generation.current) return;
+      finish(true);
       cb.current.onError(micErrorMessage(e));
       setState('idle');
     } finally {
-      starting.current = false;
+      if (token === generation.current) starting.current = false;
     }
   }, [finish]);
 
@@ -74,19 +98,25 @@ export function useDictation(onText: (text: string) => void, onError: (msg: stri
     if (e.button !== 0) return;
     e.preventDefault();
     try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    if (rec.current && toggleMode.current) { finish(); return; }
+    if (toggleMode.current && (rec.current || starting.current)) { finish(starting.current); return; }
+    pointerDownAt.current = Date.now();
     void begin();
   }, [begin, finish]);
 
   const onPointerUp = useCallback(() => {
+    if (pointerDownAt.current === null) return;
+    const held = Date.now() - pointerDownAt.current >= HOLD_MS;
+    pointerDownAt.current = null;
     const r = rec.current;
     if (!r) {
-      // Still waiting on the permission prompt: treat as a tap.
-      if (starting.current) toggleMode.current = true;
+      if (starting.current) {
+        if (held) finish(true);
+        else toggleMode.current = true;
+      }
       return;
     }
     if (toggleMode.current) return;
-    if (Date.now() - r.downAt < HOLD_MS) toggleMode.current = true; // tap: keep recording
+    if (!held) toggleMode.current = true; // tap: keep recording
     else finish();
   }, [finish]);
 
@@ -97,14 +127,20 @@ export function useDictation(onText: (text: string) => void, onError: (msg: stri
     else { toggleMode.current = true; void begin(); }
   }, [begin, finish]);
 
+  const onPointerCancel = useCallback(() => {
+    pointerDownAt.current = null;
+    finish(true);
+  }, [finish]);
+
   // Esc cancels; unmount stops.
   useEffect(() => {
-    if (state !== 'recording') return;
+    if (state !== 'recording' && state !== 'starting') return;
     const k = (e: KeyboardEvent) => { if (e.key === 'Escape') finish(true); };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [state, finish]);
-  useEffect(() => () => finish(true), [finish]);
+  // A recording/transcription belongs to one draft, including while permission is pending.
+  useEffect(() => () => finish(true), [finish, botId]);
 
-  return { state, onPointerDown, onPointerUp, onKeyDown, cancel: () => finish(true) };
+  return { state, onPointerDown, onPointerUp, onPointerCancel, onKeyDown, cancel: () => finish(true) };
 }

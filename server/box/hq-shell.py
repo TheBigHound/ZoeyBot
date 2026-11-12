@@ -3,7 +3,8 @@
 
 It paints the wallpaper described in /opt/hq/screens/N/look.json (through xfdesktop where that runs,
 in a desktop window of its own on a bare display) and shows a small dock with Browser, Terminal and
-Files. The dock lives in the layer below normal windows, so a maximized window simply covers it.
+Files. By default the dock stays below normal windows. On a dedicated VM, opt in to a visible
+dock over maximized windows with /opt/hq/desktop.json: {"dockAboveWindows": true}.
 It follows changes to look.json and to the screen size on its own, and exits when the look is removed.
 """
 import math
@@ -281,7 +282,10 @@ class Shell:
         win.set_accept_focus(False)
         win.set_skip_taskbar_hint(True)
         win.set_skip_pager_hint(True)
-        win.set_keep_below(True)
+        # Keep the shared/cloud desktop behavior unless this machine explicitly opts in.
+        above = (hqlib.read_json(hqlib.ROOT + '/desktop.json') or {}).get('dockAboveWindows') is True
+        win.set_keep_below(not above)
+        win.set_keep_above(above)
         win.set_app_paintable(True)
         win.stick()
         self.glass = bool(self.screen.is_composited() and self.screen.get_rgba_visual())
@@ -304,7 +308,10 @@ class Shell:
         # Only the pill takes clicks; the shadow margin lets them through to whatever is behind.
         region = cairo.Region(cairo.RectangleInt(MARGIN, MARGIN, pill_w, pill_h))
         win.input_shape_combine_region(region)
-        win.get_window().lower()
+        if above:
+            win.get_window().raise_()
+        else:
+            win.get_window().lower()
         if self.wall_win and self.wall_win.get_window():
             self.wall_win.get_window().lower()
         self.dock = win
