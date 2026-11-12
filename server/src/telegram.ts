@@ -1,7 +1,8 @@
 import { db } from './db.js';
 import { appendRow, getBotRow } from './store.js';
-import { enqueueAndWait, turnHooks } from './agent/loop.js';
+import { enqueueAndWait } from './agent/loop.js';
 import { primaryBotId } from './engine.js';
+import { installAlertHooks } from './alerts.js';
 
 /**
  * Telegram as a ZoeyBot channel. Not the engine's own Telegram platform: everything here writes
@@ -144,25 +145,27 @@ export function isUrgent(text: string): boolean {
   return !!first && /^\W*URGENT\b/i.test(first);
 }
 
-/** A routine turn ended: forward the reply to every allowlisted chat when it is flagged urgent. */
-export async function notifyUrgent(botId: string, routineName: string, reply: string): Promise<void> {
+/** A routine turn ended: forward the reply to every allowlisted chat when it is flagged urgent. Resolves to the number of chats that accepted it (0 when off). */
+export async function notifyUrgent(botId: string, routineName: string, reply: string): Promise<number> {
   const cfg = telegramConfig();
-  if (!cfg.token || !cfg.notifications || !cfg.allowedChatIds.length) return;
-  if (!isUrgent(reply)) return;
+  if (!cfg.token || !cfg.notifications || !cfg.allowedChatIds.length) return 0;
+  if (!isUrgent(reply)) return 0;
   const name = telegramDeps.getBotRow(botId)?.name ?? botId;
   const header = `⚠️ ${name} · ${routineName}\n`;
   const room = TELEGRAM_CHUNK - header.length;
   const body = reply.length > room ? `${reply.slice(0, room - 1).trimEnd()}…` : reply;
   const sent = await Promise.all(cfg.allowedChatIds.map((chat) => sendTelegram(chat, header + body)));
-  console.log(`[telegram] urgent alert from ${name} (${routineName}): delivered to ${sent.filter(Boolean).length}/${sent.length} chat(s)`);
+  const delivered = sent.filter(Boolean).length;
+  console.log(`[telegram] urgent alert from ${name} (${routineName}): delivered to ${delivered}/${sent.length} chat(s)`);
+  return delivered;
 }
 
-let hooksInstalled = false;
-/** Register the URGENT forwarder with the turn loop. loop.ts must not import this module (cycle), so it is pushed in. */
+/**
+ * @deprecated The URGENT hook lives in alerts.ts (installAlertHooks): it forwards to Telegram through
+ * notifyUrgent and records the alert for the dashboard. Kept as an alias for callers of the old name.
+ */
 export function installTelegramHooks() {
-  if (hooksInstalled) return;
-  hooksInstalled = true;
-  turnHooks.afterRoutine = (botId, name, text) => { void notifyUrgent(botId, name, text).catch(() => {}); };
+  installAlertHooks();
 }
 
 // ---------- inbound polling ----------

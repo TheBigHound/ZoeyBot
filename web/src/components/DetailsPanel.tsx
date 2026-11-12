@@ -26,12 +26,20 @@ const LS_TAB = 'hq.detailsTab';
 export const DETAILS_TAB_EVENT = 'hq:details-tab';
 const isTab = (v: unknown): v is DetailsTab => typeof v === 'string' && (TABS as string[]).includes(v);
 
-function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
+function Toggle({ on, onChange, label, readOnly, title }: { on: boolean; onChange?: (v: boolean) => void; label: string; readOnly?: boolean; title?: string }) {
   return (
-    <button type="button" role="switch" aria-checked={on} aria-label={label} className={`toggle${on ? ' is-on' : ''}`} onClick={() => onChange(!on)}>
+    <button type="button" role="switch" aria-checked={on} aria-label={label} aria-readonly={readOnly || undefined} title={title} className={`toggle${on ? ' is-on' : ''}${readOnly ? ' is-readonly' : ''}`} onClick={() => { if (!readOnly) onChange?.(!on); }}>
       <span className="toggle__knob" />
     </button>
   );
+}
+
+/** Telegram's one-line state: wired up, waiting on the allowlist, or absent. */
+export function telegramState(tg: ChannelsStatus['telegram'] | undefined): string {
+  if (!tg?.configured) return 'Not configured';
+  if (!tg.chatAllowlisted) return 'Set TELEGRAM_ALLOWED_CHAT_IDS';
+  const n = tg.allowlistedCount ?? 0;
+  return `Connected · ${n} ${n === 1 ? 'chat' : 'chats'}${tg.polling ? ' · polling' : ''}`;
 }
 
 /** "tomorrow", "in 2h", "in 12m": when a routine next fires. */
@@ -98,21 +106,58 @@ export function connectedChannelCount(c: ChannelsStatus | null): number {
   return 1 + (c.telegram.configured && c.telegram.username ? 1 : 0) + (c.slack.connected ? 1 : 0);
 }
 
-function ChannelRows({ channels, failed }: { channels: ChannelsStatus | null; failed: boolean }) {
+/** The Telegram row (+ its inline setup explainer), shared by the channel list and the Alert routing group. */
+function TelegramRow({ channels, failed }: { channels: ChannelsStatus | null; failed: boolean }) {
   const [explain, setExplain] = useState(false);
+  const tg = channels?.telegram;
+  const pending = !channels && !failed;
+  const tgOn = !!(tg?.configured && tg.chatAllowlisted);
+  const tgSub: ReactNode = pending ? 'Checking…' : <>{tgOn && <i className="okdot" aria-hidden />}{telegramState(tg)}</>;
+  const tgNeedsSetup = !pending && !tg?.configured;
+  return (
+    <>
+      <div className="drow">
+        <span className="drow__ic drow__ic--tg"><TgGlyph /></span>
+        <span className="drow__text">
+          <span className="drow__title">Telegram{tg?.username ? ` @${tg.username}` : ''}</span>
+          <span className="drow__sub">{tgSub}</span>
+        </span>
+        {tgNeedsSetup && <button type="button" className="drow__cta" data-channel="telegram-setup" onClick={() => setExplain((v) => !v)} aria-expanded={explain}>Set up</button>}
+      </div>
+      {tgNeedsSetup && explain && (
+        <div className="drow__note" role="note">Add <code>TELEGRAM_BOT_TOKEN</code> to <code>.env.local</code> and restart. Then message your bot on Telegram and send <code>/start</code>.</div>
+      )}
+    </>
+  );
+}
+
+/** Mockup's "Alert routing": the Telegram row, then where urgent alerts and digests go (read-only; set in .env.local). */
+function AlertRouting({ channels, failed }: { channels: ChannelsStatus | null; failed: boolean }) {
+  const tg = channels?.telegram;
+  const urgentOn = !!(tg?.configured && tg.chatAllowlisted && tg.notifications);
+  return (
+    <div className="dlist">
+      <TelegramRow channels={channels} failed={failed} />
+      <div className="drow drow--route" data-route="urgent">
+        <span className="drow__ic drow__ic--tg"><TgGlyph /></span>
+        <span className="drow__text"><span className="drow__title">Urgent → Telegram</span><span className="drow__sub">{tg?.configured ? (tg.notifications ? 'URGENT routine replies are forwarded' : 'Muted by TELEGRAM_NOTIFICATIONS=0') : 'Needs Telegram'}</span></span>
+        <Toggle on={urgentOn} readOnly label={`Urgent to Telegram ${urgentOn ? 'on' : 'off'}`} title="Set TELEGRAM_NOTIFICATIONS=0 in .env.local to turn off" />
+      </div>
+      <div className="drow drow--route" data-route="digest">
+        <span className="drow__ic drow__ic--web"><WebGlyph /></span>
+        <span className="drow__text"><span className="drow__title">Digest → Dashboard</span><span className="drow__sub">Routine results land in each bot’s chat</span></span>
+        <Toggle on readOnly label="Digest to Dashboard on" title="Always on" />
+      </div>
+    </div>
+  );
+}
+
+function ChannelRows({ channels, failed, telegram = true }: { channels: ChannelsStatus | null; failed: boolean; telegram?: boolean }) {
   const addSlack = async () => {
     const popup = openPopup('about:blank');
     try { const { redirectUrl } = await api.connect('slack'); if (popup) popup.location.href = redirectUrl; } catch { popup?.close(); }
   };
-  const tg = channels?.telegram;
   const pending = !channels && !failed;
-  let tgSub: ReactNode;
-  if (pending) tgSub = 'Checking…';
-  else if (tg?.configured && tg.username && tg.chatAllowlisted) tgSub = <><i className="okdot" aria-hidden />@{tg.username} · notifications {tg.notifications ? 'on' : 'off'}</>;
-  else if (tg?.configured && tg.username) tgSub = `Send /start to @${tg.username} to finish setup`;
-  else if (tg?.configured) tgSub = 'Set up · waiting for Telegram to answer';
-  else tgSub = 'Not set up';
-  const tgNeedsSetup = !pending && !tg?.configured;
   return (
     <div className="dlist">
       <div className="drow">
@@ -122,17 +167,7 @@ function ChannelRows({ channels, failed }: { channels: ChannelsStatus | null; fa
           <span className="drow__sub"><i className="okdot" aria-hidden />Connected · you’re here</span>
         </span>
       </div>
-      <div className="drow">
-        <span className="drow__ic drow__ic--tg"><TgGlyph /></span>
-        <span className="drow__text">
-          <span className="drow__title">Telegram</span>
-          <span className="drow__sub">{tgSub}</span>
-        </span>
-        {tgNeedsSetup && <button type="button" className="drow__cta" data-channel="telegram-setup" onClick={() => setExplain((v) => !v)} aria-expanded={explain}>Set up</button>}
-      </div>
-      {tgNeedsSetup && explain && (
-        <div className="drow__note" role="note">Add <code>TELEGRAM_BOT_TOKEN</code> to <code>.env.local</code> and restart. Then message your bot on Telegram and send <code>/start</code>.</div>
-      )}
+      {telegram && <TelegramRow channels={channels} failed={failed} />}
       <div className="drow">
         <span className="drow__ic drow__ic--sl"><SlackGlyph /></span>
         <span className="drow__text">
@@ -325,11 +360,17 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
           </section>
         )}
         {effectiveTab === 'channels' && (
-          <section className="dsec">
-            <div className="dsec__h"><span>Channels</span></div>
-            <ChannelRows channels={channels} failed={failed} />
-            {failed && <div className="panel-empty">Couldn’t check channel status. The app itself is still connected.</div>}
-          </section>
+          <>
+            <section className="dsec">
+              <div className="dsec__h"><span>Alert routing</span></div>
+              <AlertRouting channels={channels} failed={failed} />
+            </section>
+            <section className="dsec">
+              <div className="dsec__h"><span>Channels</span></div>
+              <ChannelRows channels={channels} failed={failed} telegram={false} />
+              {failed && <div className="panel-empty">Couldn’t check channel status. The app itself is still connected.</div>}
+            </section>
+          </>
         )}
         {effectiveTab === 'engine' && !isRoom && (
           <>

@@ -34,6 +34,8 @@ export interface ComputerDetails {
 
 export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'effort' | 'mode'>>;
 
+export interface EnginePatch { provider?: string | null; model?: string | null; cwd?: string; toolsets?: string[] }
+
 export const configApi = {
   settings: (botId: string) => req<BotSettingsBundle>('GET', `/bots/${botId}/settings`),
   updateBot: (botId: string, p: BotPatch) => req<{ bot: Bot }>('PATCH', `/bots/${botId}`, p),
@@ -65,7 +67,11 @@ export const configApi = {
   handback: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/handback`),
 
   engine: (botId: string) => req<{ engine: EngineInfo }>('GET', `/bots/${botId}/engine`),
-  setEngine: (botId: string, p: { provider?: string | null; model?: string | null }) => req<{ engine: EngineInfo }>('PATCH', `/bots/${botId}/engine`, p),
+  /**
+   * Changes the agent's provider/model, working directory or toolset allowlist. cwd/toolsets restart the
+   * managed gateway (status 'starting' for a bit); for the primary bot they are stored and `note` says so.
+   */
+  setEngine: (botId: string, p: EnginePatch) => req<{ engine: EngineInfo; note?: string }>('PATCH', `/bots/${botId}/engine`, p),
   /** Opens the provider's sign-in flow in a terminal on the bot's screen. */
   engineLogin: (botId: string, provider?: string) => req<{ ok: true }>('POST', `/bots/${botId}/engine/login`, provider ? { provider } : {}),
   restartEngine: (botId: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/restart`),

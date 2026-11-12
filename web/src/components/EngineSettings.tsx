@@ -7,6 +7,29 @@ import { Icon } from './Icon';
 
 const KIND: Record<EngineProvider['kind'], string> = { subscription: 'Subscription', api_key: 'API key' };
 const STATUS: Record<EngineInfo['status'], string> = { ready: 'ready', starting: 'starting', stopped: 'stopped', error: 'error' };
+const EXECUTION: Record<EngineInfo['execution'], string> = { host: 'Mac host', vm: 'Bot computer', orgo: 'Orgo computer' };
+
+/** Hermes toolset names the server accepts, with the labels the chips show. `apps` is the app-side Composio pseudo toolset. */
+export const TOOLSETS: { id: string; label: string; title?: string }[] = [
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'file', label: 'Files' },
+  { id: 'web', label: 'Web search' },
+  { id: 'browser', label: 'Browser' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'todo', label: 'Planning' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'vision', label: 'Vision' },
+  { id: 'code_execution', label: 'Code execution' },
+  { id: 'delegation', label: 'Subagents' },
+  { id: 'chat_history_lookup', label: 'Chat history' },
+  { id: 'cronjob', label: 'Cron' },
+  { id: 'image_gen', label: 'Image generation' },
+  { id: 'x_search', label: 'X search' },
+  { id: 'apps', label: 'Connected apps', title: 'Connected apps (Composio) through the app' },
+];
+
+/** "/Users/me/proj" → "~/proj" for display; the full path stays in the title. */
+export const tilde = (p: string) => p.replace(/^\/Users\/[^/]+(?=\/|$)/, '~');
 
 /** Connected providers first; otherwise the server's order. */
 function sortProviders(list: EngineProvider[]): EngineProvider[] {
@@ -80,16 +103,25 @@ export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }
   const { engine, phase, load, dirty } = ctl;
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
-  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | 'cwd' | 'tools' | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
+  // Hermes home group: working-dir draft, its inline error, and the server's note (primary home is managed outside the app).
+  const [cwd, setCwd] = useState('');
+  const [cwdError, setCwdError] = useState<string | null>(null);
+  const [serverNote, setServerNote] = useState<string | null>(null);
+  // Tool allowlist: optimistic list while a PATCH is in flight, reverted on error.
+  const [pendingToolsets, setPendingToolsets] = useState<string[] | null>(null);
+  const [toolsError, setToolsError] = useState<string | null>(null);
   const botId = bot.id;
 
   // Draft follows the server's values unless the person is mid-edit.
   const srvProvider = engine?.provider ?? '';
   const srvModel = engine?.model ?? '';
+  const srvCwd = engine?.cwd ?? '';
   useEffect(() => { if (!dirty.current) { setProvider(srvProvider); setModel(srvModel); } }, [srvProvider, srvModel, dirty]);
-  useEffect(() => { setNote(null); setSigningIn(false); }, [botId]);
+  useEffect(() => { setCwd(srvCwd); }, [srvCwd]);
+  useEffect(() => { setNote(null); setSigningIn(false); setCwdError(null); setServerNote(null); setPendingToolsets(null); setToolsError(null); }, [botId]);
 
   const apply = useCallback((e: EngineInfo, keepDraft = false) => {
     ctl.apply(e, keepDraft);
@@ -172,6 +204,29 @@ export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }
     finally { setBusy(null); }
   };
 
+  const starting = engine.status === 'starting';
+  const wantCwd = cwd.trim();
+  const cwdChanged = wantCwd !== (engine.cwd ?? '');
+  const saveCwd = async () => {
+    if (!cwdChanged || busy) return;
+    setBusy('cwd'); setCwdError(null);
+    try { const r = await configApi.setEngine(botId, { cwd: wantCwd }); apply(r.engine, true); setServerNote(r.note ?? null); }
+    catch (e) { setCwdError((e as Error).message || 'The engine did not answer.'); }
+    finally { setBusy(null); }
+  };
+
+  const toolsets = pendingToolsets ?? engine.toolsets ?? [];
+  const toolsLocked = busy === 'tools' || starting;
+  const toggleToolset = async (id: string) => {
+    if (toolsLocked) return;
+    const on = toolsets.includes(id);
+    const next = on ? toolsets.filter((t) => t !== id) : [...toolsets, id];
+    setPendingToolsets(next); setBusy('tools'); setToolsError(null);
+    try { const r = await configApi.setEngine(botId, { toolsets: next }); apply(r.engine, true); setServerNote(r.note ?? null); }
+    catch (e) { setToolsError((e as Error).message || 'The engine did not answer.'); }
+    finally { setPendingToolsets(null); setBusy(null); }
+  };
+
   return (
     <div className="panel-card engine">
       <div className="panel-row panel-row--setting">
@@ -218,6 +273,51 @@ export function EngineSettings({ bot, ctl }: { bot: Bot; ctl: EngineController }
         </div>
       )}
       {note && <div className="voice-error" role="alert">{note}</div>}
+
+      <div className="engine-group" data-group="home">
+        <div className="engine-group__h">Hermes home</div>
+        <div className="field">
+          <span className="field__lab">Home</span>
+          <code className="field__mono" title={engine.home}>{engine.home ? tilde(engine.home) : '—'}</code>
+        </div>
+        <div className="field">
+          <span className="field__lab">Execution</span>
+          <span className="select select--static">{EXECUTION[engine.execution] ?? engine.execution}</span>
+        </div>
+        <div className="field field--edit">
+          <label className="field__lab" htmlFor={`${listId}-cwd`}>Working dir</label>
+          <span className="field__ctl">
+            <input
+              id={`${listId}-cwd`} className="field__input" value={cwd} spellCheck={false} autoComplete="off" placeholder="/absolute/path"
+              aria-invalid={cwdError ? true : undefined} title={engine.cwd}
+              onChange={(e) => { setCwdError(null); setCwd(e.target.value); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveCwd(); }}
+            />
+            <button type="button" className="btn btn--sm btn--bot" data-action="save-cwd" onClick={saveCwd} disabled={!cwdChanged || busy === 'cwd' || starting}>{busy === 'cwd' ? 'Saving…' : 'Save'}</button>
+          </span>
+        </div>
+        {cwdError && <div className="engine__error" role="alert">{cwdError}</div>}
+        {serverNote && <div className="engine__hint engine__hint--note" role="note">{serverNote}</div>}
+      </div>
+
+      <div className="engine-group" data-group="tools">
+        <div className="engine-group__h">Tool allowlist</div>
+        <div className="chips" role="group" aria-label="Tool allowlist">
+          {TOOLSETS.map((t) => {
+            const on = toolsets.includes(t.id);
+            return (
+              <button
+                key={t.id} type="button" className={`chip ${on ? 'is-on' : 'is-off'}`} data-toolset={t.id} aria-pressed={on}
+                title={t.title ?? (on ? `${t.label} · on` : `${t.label} · off`)} disabled={toolsLocked} onClick={() => toggleToolset(t.id)}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        {toolsError && <div className="engine__error" role="alert">{toolsError}</div>}
+        <div className="engine__hint">{starting ? 'Restarting this bot’s agent…' : 'Changes restart this bot’s agent.'}</div>
+      </div>
       <div className="engine__meta">
         <span className={`engine__state is-${engine.status}`} title={engine.version ? `Hermes ${engine.version}` : undefined}>
           <i aria-hidden />

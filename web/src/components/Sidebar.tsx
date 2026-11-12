@@ -1,11 +1,13 @@
 import { memo, useCallback, useEffect, useState } from 'react';
 import { useConfigUI, useVersion } from '../configStore';
-import type { Bot, Task } from '@shared/types';
+import type { Bot, LiveState, Task } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
 import { botVars } from '../lib/colors';
 import { configApi } from '../lib/configApi';
+import { activityStatus } from '../lib/phrases';
 import { useStore } from '../store';
 import { api } from '../lib/api';
+import { voiceApi } from '../voice/api';
 import { useLocalConversation } from '../voice/localConversationStore';
 import { Icon } from './Icon';
 import { Glyph } from './config/glyphs';
@@ -37,21 +39,28 @@ export function openDetailsTab(tab: DetailsTab) {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('hq:details-tab', { detail: tab }));
 }
 
-/** What the bot is doing right now, in one word, for the roster's sub line. */
-export type BotMode = { text: string; voice: boolean; live: boolean } | null;
+/** The roster's sub line: dot tone + text, as in the mockup's `.bot-sub`. */
+export type RosterStatus = { tone: 'busy' | 'warn' | 'idle'; text: string };
 
 function voiceMode(status: string): string {
-  if (status === 'speaking' || status === 'synthesizing') return 'speaking';
-  if (status === 'transcribing' || status === 'sending' || status === 'waiting') return 'thinking';
-  return 'listening';
+  if (status === 'speaking' || status === 'synthesizing') return 'Speaking';
+  if (status === 'transcribing' || status === 'sending' || status === 'waiting') return 'Thinking';
+  return 'Listening';
 }
 
-export function modeFor(bot: Bot, running: boolean, awaiting: string | null, voiceStatus: string | null): BotMode {
-  if (voiceStatus) return { text: voiceMode(voiceStatus), voice: true, live: true };
-  if (awaiting) return { text: 'needs you', voice: false, live: false };
-  if (running) return { text: 'working', voice: false, live: true };
-  if (bot.unread > 0) return { text: 'new reply', voice: false, live: false };
-  return null;
+/**
+ * What to say under a bot's name. Running + asking another bot → "Asking Researcher"; running → the activity
+ * phrase; stopped for the person → "Waiting on you"; else "Idle". A live voice conversation counts as busy.
+ */
+export function rosterStatus(live: LiveState | undefined, voiceStatus: string | null): RosterStatus {
+  if (voiceStatus) return { tone: 'busy', text: voiceMode(voiceStatus) };
+  if (live?.isRunning) {
+    const a = live.activity;
+    if (a?.kind === 'messaging_named' && a.detail) return { tone: 'busy', text: `Asking ${a.detail}` };
+    return { tone: 'busy', text: activityStatus(live, []) };
+  }
+  if (live?.awaiting) return { tone: 'warn', text: 'Waiting on you' };
+  return { tone: 'idle', text: 'Idle' };
 }
 
 /** The bot's role: its label ("Chief of Staff"), else the first clause of its description. */
@@ -61,32 +70,51 @@ export function roleFor(bot: Bot): string {
   return d.length > 0 && d.length <= 40 ? d : '';
 }
 
-const BotRow = memo(function BotRow({ bot, selected, running, awaiting, voiceStatus, collapsed, onSelect }: {
-  bot: Bot; selected: boolean; running: boolean; awaiting: string | null; voiceStatus: string | null; collapsed: boolean; onSelect: (id: string) => void;
+const BotRow = memo(function BotRow({ bot, selected, live, voiceStatus, collapsed, onSelect }: {
+  bot: Bot; selected: boolean; live: LiveState | undefined; voiceStatus: string | null; collapsed: boolean; onSelect: (id: string) => void;
 }) {
-  const mode = modeFor(bot, running, awaiting, voiceStatus);
+  const status = rosterStatus(live, voiceStatus);
+  const sub = bot.model ? `${status.text} · ${bot.model}` : status.text;
   const role = roleFor(bot);
-  const sub = [role, mode?.text].filter(Boolean).join(' · ') || bot.lastPreview || 'No messages yet';
-  const dot = mode?.live ? 'is-live' : mode || bot.unread > 0 ? 'is-ok' : null;
-  const title = `${bot.name}${role ? ` · ${role}` : ''}`;
+  const title = `${bot.name}${role ? ` · ${role}` : ''} · ${sub}`;
+  const dot = <i className={`bot-row__dot is-${status.tone}`} aria-label={status.text} />;
   return (
     <button type="button" className={`bot-row${selected ? ' is-selected' : ''}${collapsed ? ' is-rail' : ''}`} style={botVars(bot.avatarColor)} onClick={() => onSelect(bot.id)} aria-current={selected || undefined} title={title}>
       <span className="bot-row__avatar">
-        <BotAvatarFor bot={bot} size={32} />
-        {dot && <span className={`bot-row__dot ${dot}`} aria-label={mode?.text ?? 'Unread activity'} />}
+        <BotAvatarFor bot={bot} size={30} />
+        {collapsed && status.tone !== 'idle' && <span className="bot-row__corner">{dot}</span>}
       </span>
       {!collapsed && (
         <>
           <span className="bot-row__text">
             <span className="bot-row__name">{bot.name}</span>
-            <span className="bot-row__sub">{sub}</span>
+            <span className="bot-row__sub">{dot}<span className="bot-row__sub-text">{sub}</span></span>
           </span>
-          {mode?.voice ? <span className="bot-row__meta is-live">voice</span> : bot.unread > 0 ? <span className="bot-row__meta">{bot.unread}</span> : <span className="bot-row__meta" />}
+          {bot.unread > 0 && <span className="bot-row__meta" aria-label={`${bot.unread} unread`}>{bot.unread}</span>}
         </>
       )}
     </button>
   );
 });
+
+/** Footer facts: how many Hermes homes run here, local speech, and whether Telegram is wired up. */
+function SidebarFacts({ homes, primaryName }: { homes: number; primaryName: string }) {
+  const [telegram, setTelegram] = useState<boolean | null>(null);
+  const [localSpeech, setLocalSpeech] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api.channels().then((c) => { if (alive) setTelegram(!!(c.telegram.configured && c.telegram.chatAllowlisted)); }).catch(() => {});
+    voiceApi.options().then((o) => { if (alive) setLocalSpeech(o.provider === 'local' && !!o.capabilities?.tts); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return (
+    <div className="sidebar__facts" aria-label="Status">
+      <span>Engine <b>{homes} {homes === 1 ? 'home' : 'homes'} · Mac host</b></span>
+      {localSpeech && <span>Speech <b>phonon / {primaryName} · local</b></span>}
+      <span>Channels <b>{telegram === null ? 'Web' : `Telegram · ${telegram ? 'on' : 'off'}`}</b></span>
+    </div>
+  );
+}
 
 /** Open tasks across every bot, for the Tasks nav badge. */
 function useOpenTaskCount(): number {
@@ -135,6 +163,8 @@ export function Sidebar() {
   const ordered = [...bots].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || b.lastActivityAt - a.lastActivityAt);
   const liveCount = ordered.filter((b) => live[b.id]?.isRunning || voiceBotId === b.id).length;
   const routinesOn = Object.values(routines).reduce((n, list) => n + list.filter((r) => r.enabled).length, 0);
+  const homes = bots.filter((b) => b.kind !== 'room').length;
+  const primaryName = bots.find((b) => b.isPrimary)?.name ?? 'Zoey';
 
   return (
     <aside className={`sidebar${collapsed ? ' is-collapsed' : ''}`}>
@@ -164,7 +194,7 @@ export function Sidebar() {
         {!collapsed && <div className="nav-h">Bots <span className="nav-h__count">{liveCount ? `${liveCount} live · ` : ''}{bots.length}</span></div>}
         <div className="bot-list" role="list">
           {ordered.map((b) => (
-            <BotRow key={b.id} bot={b} selected={selectedBotId === b.id} running={!!live[b.id]?.isRunning} awaiting={live[b.id]?.awaiting?.reason ?? null} voiceStatus={voiceBotId === b.id ? voiceStatus : null} collapsed={collapsed} onSelect={selectBot} />
+            <BotRow key={b.id} bot={b} selected={selectedBotId === b.id} live={live[b.id]} voiceStatus={voiceBotId === b.id ? voiceStatus : null} collapsed={collapsed} onSelect={selectBot} />
           ))}
           <button type="button" className={`bot-row bot-row--ghost${collapsed ? ' is-rail' : ''}`} onClick={() => setModal('create')} title="Create a bot">
             <span className="bot-row__avatar bot-row__avatar--ghost" aria-hidden><Icon name="plus" size={14} opacity={0.66} /></span>
@@ -196,6 +226,8 @@ export function Sidebar() {
 
       <div className="sidebar__footer">
         <div className="sidebar__fade" />
+        {!collapsed && <SidebarFacts homes={homes} primaryName={primaryName} />}
+        <div className="sidebar__account">
         <div className="account">
           <button type="button" className="account__btn" onClick={() => setAccountMenu(!accountMenu)} aria-haspopup="menu" aria-expanded={accountMenu} title={user?.email}>
             <span className="account__initials">{initials(user?.name ?? user?.email ?? '')}</span>
@@ -225,6 +257,7 @@ export function Sidebar() {
             <Glyph name="gear" size={16} opacity={0.66} />
           </button>
         )}
+        </div>
       </div>
     </aside>
   );

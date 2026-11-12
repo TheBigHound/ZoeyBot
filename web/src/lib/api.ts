@@ -1,4 +1,4 @@
-import type { Bot, ChannelsStatus, ComputerState, LiveState, Routine, Row, Toolkit, User } from '@shared/types';
+import type { Alert, Bot, ChannelsStatus, ComputerState, LiveState, Routine, Row, Toolkit, User } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -56,6 +56,10 @@ export const api = {
   createRoom: (name: string, botIds: string[]) => req<{ id: string }>('POST', '/rooms', { name, botIds }),
 
   channels: () => req<ChannelsStatus>('GET', '/channels'),
+
+  /** URGENT routine results for the alert strip; newest first, dismissed ones left out. */
+  alerts: () => req<{ alerts: Alert[] }>('GET', '/alerts'),
+  dismissAlert: (id: string) => req<{ ok: true }>('POST', `/alerts/${id}/dismiss`),
 };
 
 /** Open a Composio redirect in a centered popup. */

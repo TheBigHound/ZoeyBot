@@ -35,7 +35,7 @@ async function fixture() {
   const originalOptions = voiceApi.options;
   voiceApi.options = async () => ({ provider: 'local', capabilities: { tts: true, stt: true, realtime: false, calls: false }, voices: [], languages: [], speeds: [] } as any);
 
-  const bots = [bot('zoey'), bot('rook')];
+  const bots = [bot('zoey'), bot('rook', { model: 'qwen3.5:35b', unread: 3 })];
   useStore.setState({
     bots,
     live: { rook: { botId: 'rook', isRunning: true, activity: null, awaiting: null, startedAt: 1, steps: 0 } as any },
@@ -77,12 +77,18 @@ test('sidebar renders bots as list rows with mode, a ghost create row and worksp
     const names = rows.map((n) => f.text(f.byClass(n, 'bot-row__name')[0]));
     assert.deepEqual(names, ['Zoey', 'Rook'], 'primary first, full name (no label mashed in)');
     const zoey = rows[0];
-    assert.match(f.text(f.byClass(zoey, 'bot-row__sub')[0]), /Chief of Staff · speaking/, 'sub line = role + current mode from the local conversation store');
-    assert.equal(f.text(f.byClass(zoey, 'bot-row__meta')[0]), 'voice', 'speaking bot gets the voice meta tag');
-    assert.ok(f.byClass(zoey, 'bot-row__dot')[0]?.props.className.includes('is-live'), 'speaking bot shows the live dot');
+    assert.match(f.text(f.byClass(zoey, 'bot-row__sub')[0]), /^Speaking$/, 'sub line = status from the local conversation store (no model set)');
+    assert.equal(f.byClass(zoey, 'bot-row__meta').length, 0, 'no unread badge without unread');
+    assert.ok(f.byClass(zoey, 'bot-row__dot')[0]?.props.className.includes('is-busy'), 'speaking bot shows the busy dot');
     const rook = rows[1];
-    assert.match(f.text(f.byClass(rook, 'bot-row__sub')[0]), /working/, 'running bot reads as working');
-    assert.ok(f.byClass(rook, 'bot-row__dot')[0]?.props.className.includes('is-live'), 'running bot shows the live dot');
+    assert.match(f.text(f.byClass(rook, 'bot-row__sub')[0]), /Thinking · qwen3\.5:35b/, 'running bot reads as the activity phrase + model');
+    assert.ok(f.byClass(rook, 'bot-row__dot')[0]?.props.className.includes('is-busy'), 'running bot shows the busy dot');
+    assert.equal(f.text(f.byClass(rook, 'bot-row__meta')[0]), '3', 'unread count badge');
+    const facts = f.byClass(r, 'sidebar__facts');
+    assert.equal(facts.length, 1, 'footer facts block');
+    assert.match(f.text(facts[0]), /Engine\s+2 homes · Mac host/);
+    assert.match(f.text(facts[0]), /Speech\s+phonon \/ Zoey · local/, 'local voice provider → speech line');
+    assert.match(f.text(facts[0]), /Channels\s+Web/, 'channels fetch failed soft → Web');
     const ghost = f.byClass(r, 'bot-row--ghost');
     assert.equal(ghost.length, 1, 'one ghost create row');
     assert.match(f.text(ghost[0]), /Create a bot/);

@@ -36,7 +36,8 @@ const routines = [
   { id: 'r3', botId: 'zoey', name: 'Paused one', prompt: '', schedule: '', timezone: 'UTC', enabled: false, nextRunAt: null, lastRunAt: null, description: '' },
 ];
 
-const engine = { botId: 'zoey', profile: 'default', status: 'ready', error: null, model: 'qwen3.5:35b', provider: 'ollama', version: '1', ownScreen: false, providers: [{ id: 'ollama', name: 'Ollama (local)', kind: 'api_key', connected: true, models: ['qwen3.5:35b'] }] };
+// execution 'vm' keeps the first test on the computer-screen variant; host rendering is covered by tests/engine-tab.test.ts.
+const engine = { botId: 'zoey', profile: 'default', status: 'ready', error: null, model: 'qwen3.5:35b', provider: 'ollama', version: '1', ownScreen: false, providers: [{ id: 'ollama', name: 'Ollama (local)', kind: 'api_key', connected: true, models: ['qwen3.5:35b'] }], execution: 'vm', home: '/Users/x/zoeybot/data/primary-hermes', cwd: '/Users/x', toolsets: ['terminal', 'file'] };
 
 const walk = (n: unknown): string => typeof n === 'string' ? n : Array.isArray(n) ? n.map(walk).join('') : n && typeof n === 'object' && 'children' in (n as object) ? (n as ReactTestInstance).children.map(walk).join('') : '';
 const text = (n: ReactTestInstance | ReactTestRenderer['root']) => walk(n);
@@ -59,7 +60,7 @@ async function mount(channels: ChannelsStatus) {
   return { root, tabs, click, useStore };
 }
 
-const full: ChannelsStatus = { web: { connected: true }, telegram: { configured: true, username: 'zoey_hq_bot', chatAllowlisted: true, notifications: true }, slack: { connected: false } };
+const full: ChannelsStatus = { web: { connected: true }, telegram: { configured: true, username: 'zoey_hq_bot', chatAllowlisted: true, notifications: true, polling: true, allowlistedCount: 1 }, slack: { connected: false } };
 
 test('details panel: title, tab strip, no suggested card or subscription link', async () => {
   const { root, tabs } = await mount(full);
@@ -101,33 +102,48 @@ test('details panel: hq:details-tab event switches tabs and the tab is remembere
   ls.delete('hq.detailsTab');
 });
 
-test('details panel: channels tab — telegram configured + allowlisted', async () => {
+test('details panel: channels tab — alert routing with telegram configured + allowlisted', async () => {
   const { root, tabs, click } = await mount(full);
   await click(tabs()[2]);
   const all = text(root.root);
+  assert.match(all, /Alert routing/);
+  assert.match(all, /Telegram @zoey_hq_bot/);
+  assert.match(all, /Connected · 1 chat · polling/);
+  assert.match(all, /Urgent → Telegram/);
+  assert.match(all, /Digest → Dashboard/);
+  const switches = root.root.findAll((n) => n.type === 'button' && n.props.role === 'switch');
+  const urgent = switches.find((n) => /Urgent to Telegram/.test(n.props['aria-label']))!;
+  assert.ok(urgent, 'urgent toggle');
+  assert.equal(urgent.props['aria-checked'], true);
+  assert.equal(urgent.props['aria-readonly'], true, 'urgent toggle is read-only');
+  assert.equal(urgent.props.title, 'Set TELEGRAM_NOTIFICATIONS=0 in .env.local to turn off');
+  const digest = switches.find((n) => /Digest to Dashboard/.test(n.props['aria-label']))!;
+  assert.equal(digest.props['aria-checked'], true);
+  assert.equal(digest.props['aria-readonly'], true);
   assert.match(all, /Web · this Mac/);
   assert.match(all, /Connected · you’re here/);
-  assert.match(all, /@zoey_hq_bot/);
-  assert.match(all, /notifications on/);
   assert.match(all, /Slack/);
   assert.match(all, /Not connected/);
   assert.ok(root.root.findAll((n) => n.type === 'button' && n.props['data-channel'] === 'slack-add').length === 1);
   ls.delete('hq.detailsTab');
 });
 
-test('details panel: channels tab — telegram configured but no chat allowlisted', async () => {
-  const { root, tabs, click } = await mount({ ...full, telegram: { configured: true, username: 'zoey_hq_bot', chatAllowlisted: false, notifications: true }, slack: { connected: true } });
+test('details panel: channels tab — telegram configured but no chat allowlisted / notifications off', async () => {
+  const { root, tabs, click } = await mount({ ...full, telegram: { configured: true, username: 'zoey_hq_bot', chatAllowlisted: false, notifications: false, polling: true, allowlistedCount: 0 }, slack: { connected: true } });
   await click(tabs()[2]);
   const all = text(root.root);
-  assert.match(all, /Send \/start to @zoey_hq_bot to finish setup/);
+  assert.match(all, /Set TELEGRAM_ALLOWED_CHAT_IDS/);
+  assert.match(all, /Muted by TELEGRAM_NOTIFICATIONS=0/);
+  const urgent = root.root.findAll((n) => n.type === 'button' && n.props.role === 'switch' && /Urgent to Telegram/.test(n.props['aria-label']))[0];
+  assert.equal(urgent.props['aria-checked'], false);
   assert.match(all, /Connected/);
   ls.delete('hq.detailsTab');
 });
 
 test('details panel: channels tab — telegram not set up shows Set up + inline explainer', async () => {
-  const { root, tabs, click } = await mount({ ...full, telegram: { configured: false, chatAllowlisted: false, notifications: true } });
+  const { root, tabs, click } = await mount({ ...full, telegram: { configured: false, chatAllowlisted: false, notifications: true, polling: false, allowlistedCount: 0 } });
   await click(tabs()[2]);
-  assert.match(text(root.root), /Not set up/);
+  assert.match(text(root.root), /Not configured/);
   const setup = root.root.findAll((n) => n.type === 'button' && n.props['data-channel'] === 'telegram-setup')[0];
   assert.ok(setup, 'Set up button');
   assert.doesNotMatch(text(root.root), /TELEGRAM_BOT_TOKEN/);

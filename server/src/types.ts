@@ -233,6 +233,20 @@ export interface ChannelsStatus {
   slack: { connected: boolean };
 }
 
+/** An URGENT routine result: shown in the dashboard's alert strip and, when configured, sent to Telegram. */
+export interface Alert {
+  id: string;
+  botId: string;
+  botName: string;
+  routineName: string | null;
+  /** The reply's first 600 characters. */
+  text: string;
+  /** How many Telegram chats accepted it (0 when Telegram is off). */
+  deliveredTo: number;
+  createdAt: number;
+  dismissedAt: number | null;
+}
+
 export interface Toolkit {
   slug: string; name: string; logo?: string; description?: string; categories: string[];
   managedAuth: boolean; noAuth: boolean; connected: boolean;
@@ -251,4 +265,6 @@ export type ServerEvent =
   | { type: 'tasks'; botId: string }
   | { type: 'memories'; botId: string }
   | { type: 'connections' }
+  /** A new URGENT alert was recorded (or one was dismissed); clients refetch GET /api/alerts. */
+  | { type: 'alerts' }
   | { type: 'ping' };

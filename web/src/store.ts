@@ -185,6 +185,10 @@ export const useStore = create<State>((set, get) => ({
       case 'connections':
         set((st) => ({ connectionsVersion: st.connectionsVersion + 1 }));
         return;
+      case 'alerts':
+        // Picked up by AlertStrip, which refetches GET /api/alerts.
+        window.dispatchEvent(new CustomEvent('zoeybot:event', { detail: ev }));
+        return;
     }
   },
 

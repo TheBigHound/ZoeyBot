@@ -14,6 +14,7 @@ import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
+import { dismissAlert, listAlerts } from './alerts.js';
 import { deleteEventTrigger } from './triggers.js';
 import { dispatchRoomMessage } from './agent/rooms.js';
 import { voiceApi } from './voice.js';
@@ -345,6 +346,19 @@ api.delete('/routines/:id', async (c) => {
   await deleteEventTrigger(r.id);
   db.prepare('DELETE FROM routines WHERE id=?').run(r.id);
   hub.emit(c.get('user').id, { type: 'routines', botId: r.bot_id });
+  return c.json({ ok: true });
+});
+
+// ---------- alerts (URGENT routine results) ----------
+
+api.get('/alerts', (c) => {
+  const includeDismissed = c.req.query('all') === '1';
+  const limit = Number(c.req.query('limit') ?? 20);
+  return c.json({ alerts: listAlerts(c.get('user').id, { includeDismissed, limit: Number.isFinite(limit) ? limit : 20 }) });
+});
+
+api.post('/alerts/:id/dismiss', (c) => {
+  if (!dismissAlert(c.get('user').id, c.req.param('id'))) return c.json({ error: 'not found' }, 404);
   return c.json({ ok: true });
 });
 

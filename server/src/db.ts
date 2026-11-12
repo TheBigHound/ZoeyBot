@@ -136,6 +136,15 @@ CREATE TABLE IF NOT EXISTS composio_sessions (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS alerts (
+  id TEXT PRIMARY KEY,
+  bot_id TEXT NOT NULL,
+  routine_name TEXT,
+  text TEXT NOT NULL,
+  delivered_to INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  dismissed_at INTEGER
+);
 `);
 
 // Idempotent column migrations for tables that predate a column.

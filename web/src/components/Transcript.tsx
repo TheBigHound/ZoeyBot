@@ -9,17 +9,21 @@ import { CardRow } from './cards/Cards';
 import { Icon } from './Icon';
 import { Markdown } from './Markdown';
 
-type Item =
+export type Item =
   | { kind: 'divider'; key: string; ts: number }
   | { kind: 'group'; key: string; side: 'left' | 'right'; from?: MessageBody['from']; rows: Row[] }
   | { kind: 'steps'; key: string; rows: Row[]; /** Row timestamps just before and just after the run of steps. */ startTs: number | null; endTs: number | null }
+  /** An ask_bot call: shown as a handoff card of its own, never folded into the steps chip. */
+  | { kind: 'handoff'; key: string; row: Row }
   | { kind: 'row'; key: string; row: Row };
 
 const DIVIDER_GAP = 60 * 60 * 1000;
 const GROUP_GAP = 5 * 60 * 1000;
 
-/** Turns rows into render items: date dividers, grouped bubbles, collapsed tool-call steps, cards, events. */
-function buildItems(rows: Row[]): Item[] {
+const isAskBot = (b: ToolCallBody) => b.name === 'ask_bot' || b.name.endsWith('_ask_bot');
+
+/** Turns rows into render items: date dividers, grouped bubbles, collapsed tool-call steps, handoff cards, cards, events. */
+export function buildItems(rows: Row[]): Item[] {
   const items: Item[] = [];
   let prevTs = 0;
   for (const row of rows) {
@@ -28,12 +32,16 @@ function buildItems(rows: Row[]): Item[] {
     prevTs = row.createdAt;
     const last = items[items.length - 1];
     const b = row.body;
-    if (b.type === 'tool-call') {
+    if (b.type === 'tool-call' && !isAskBot(b)) {
       if (last?.kind === 'steps') last.rows.push(row);
       else items.push({ kind: 'steps', key: `s${row.seq}`, rows: [row], startTs: before || null, endTs: null });
       continue;
     }
     if (last?.kind === 'steps' && last.endTs === null) last.endTs = row.createdAt;
+    if (b.type === 'tool-call') {
+      items.push({ kind: 'handoff', key: `h${row.seq}`, row });
+      continue;
+    }
     if (b.type === 'message') {
       if (!b.text && !b.streaming) continue;
       const side = b.role === 'user' && (!b.from || b.from.kind === 'voice') ? 'right' : 'left';
@@ -215,6 +223,58 @@ function Steps({ item, active, open: unfinished, extra }: {
   );
 }
 
+interface AskArgs { bot_name?: string; request?: string; wait?: boolean }
+
+/** What the state pill on a handoff card says and which tone it takes. */
+export function handoffState(call: ToolCallBody): { label: string; tone: 'wait' | 'done' | 'danger' } {
+  const summary = call.summary ?? '';
+  switch (call.status) {
+    case 'running': return { label: 'waiting…', tone: 'wait' };
+    case 'awaiting-approval': return { label: 'waiting for your OK', tone: 'wait' };
+    case 'error': return { label: 'failed', tone: 'danger' };
+    case 'denied': return { label: 'not allowed', tone: 'danger' };
+  }
+  if (/^Asked\b/.test(summary)) return { label: 'task · running', tone: 'wait' };
+  if (/\bdid not answer$/.test(summary)) return { label: 'no answer', tone: 'danger' };
+  if (/\banswered$/.test(summary)) return { label: 'answered', tone: 'done' };
+  return { label: 'done', tone: 'done' };
+}
+
+/**
+ * An ask_bot call between two bots, drawn as a card of its own (mockup: "handoff"). The request is
+ * the tool's argument; the reply row only ever shows the tool's summary, never text we don't have.
+ */
+function HandoffCard({ row, bot }: { row: Row; bot: Bot }) {
+  const call = row.body as ToolCallBody;
+  const args = (call.args && typeof call.args === 'object' ? call.args : {}) as AskArgs;
+  const wanted = (args.bot_name ?? '').trim().toLowerCase();
+  const target = useStore((s) => (wanted ? s.bots.find((b) => b.name.trim().toLowerCase() === wanted) : undefined));
+  const selectBot = useStore((s) => s.selectBot);
+  const targetName = target?.name ?? (args.bot_name || 'a Bot');
+  const state = handoffState(call);
+  const showReply = !!call.summary && call.status !== 'running' && !/^Asked\b/.test(call.summary);
+  return (
+    <div className={`handoff is-${call.status}`} data-handoff={call.callId}>
+      <div className="handoff-head">
+        <BotAvatarFor bot={bot} size={20} />
+        <span className="handoff-arrow" aria-hidden>→</span>
+        {target ? <BotAvatarFor bot={target} size={20} /> : <BotAvatar shape="blob" color="gray" size={20} />}
+        <span className="handoff-title">ask_bot · {targetName} · <code>wait={args.wait === false ? 'false' : 'true'}</code></span>
+        <span className={`handoff-state is-${state.tone}`}>{state.tone === 'wait' && call.status === 'running' && <span className="step__spin" aria-hidden />}{state.label}</span>
+      </div>
+      <div className="handoff-body">
+        <div className="handoff-kv"><span className="handoff-kv__k">Request</span><span className="handoff-kv__v">{args.request?.trim() || '—'}</span></div>
+        {showReply && <div className="handoff-kv"><span className="handoff-kv__k">Reply</span><span className="handoff-kv__v">{call.summary}</span></div>}
+      </div>
+      <div className="handoff-foot">
+        {target && <button type="button" className="handoff-link" onClick={() => selectBot(target.id)}>Open in {target.name}</button>}
+        <span>visible in both transcripts</span>
+        <span className="handoff-foot__time">{clock(row.createdAt)}</span>
+      </div>
+    </div>
+  );
+}
+
 function SystemRow({ row }: { row: Row }) {
   const b = row.body;
   if (b.type === 'event') return <div className="system-event">{b.text}</div>;
@@ -291,6 +351,8 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
               return <Steps key={it.key} item={it} active={it.key === activeKey} open={it.key === openKey} extra={extraSteps} />;
             case 'row':
               return <SystemRow key={it.key} row={it.row} />;
+            case 'handoff':
+              return <HandoffCard key={it.key} row={it.row} bot={bot} />;
             case 'group': {
               if (it.side === 'right') {
                 return (
@@ -304,11 +366,14 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
               const prev = items[idx - 1];
               const worked = prev?.kind === 'steps' && prev.key !== openKey ? workedMs(prev) : null;
               const lastRow = it.rows[it.rows.length - 1];
+              // The other side of a handoff: another bot's ask_bot request landed here as a user turn.
+              const askedByBot = it.from?.kind === 'bot' && (lastRow.body as MessageBody).role === 'user';
               return (
                 <div key={it.key} className="group is-left">
                   {it.from && it.from.kind !== 'bot' && <SenderLabel from={it.from} />}
                   {it.rows.map((r) => <AgentText key={r.seq} row={r} />)}
                   <AgentMeta bot={bot} from={it.from} worked={worked} ts={lastRow.createdAt} />
+                  {askedByBot && <span className="bubble__source">asked via ask_bot</span>}
                 </div>
               );
             }

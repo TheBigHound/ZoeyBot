@@ -163,6 +163,59 @@
 .step__shot { max-width: 240px; margin: 2px 0 6px 26px; border-radius: 6px; box-shadow: var(--color-border-tertiary) 0 0 0 0.5px; }
 @keyframes step-spin { to { transform: rotate(360deg); } }
 
+/* ---------- alert strip: newest URGENT routine result, under the chat header (mockup .alert-strip) ---------- */
+.alert-strip {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0; min-height: 36px; padding: 6px 20px;
+  background: var(--color-warn-bg); border-bottom: 0.5px solid var(--color-border-tertiary);
+  font-size: 12.5px; line-height: 18px; letter-spacing: 0.12px; color: var(--color-text-secondary);
+  animation: rise 160ms var(--ease-out);
+}
+.alert-strip__glyph { flex-shrink: 0; color: var(--color-warn-text); font-size: 13px; }
+.alert-strip__who { flex-shrink: 0; font-weight: 600; color: var(--color-warn-text); }
+.alert-strip__text { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink); }
+.alert-strip__time { flex-shrink: 0; font-variant-numeric: tabular-nums; color: var(--color-text-quaternary); }
+.alert-strip__via { flex-shrink: 0; font-size: 11px; color: var(--color-text-quaternary); white-space: nowrap; }
+.alert-strip__btn {
+  flex-shrink: 0; height: 24px; padding: 0 10px; border-radius: var(--radius-full);
+  background: transparent; box-shadow: var(--color-warn-text) 0 0 0 0.5px inset;
+  font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-warn-text); transition: background-color 120ms;
+}
+.alert-strip__btn:hover { background: var(--color-bg-hover); }
+
+/* ---------- handoff card: one ask_bot call between two bots (mockup .handoff) ---------- */
+.handoff {
+  align-self: stretch; width: 100%; max-width: 640px; overflow: hidden;
+  border: 0.5px solid var(--color-border-secondary); border-radius: var(--radius-md); background: var(--color-bg-elevated);
+  font-size: 13px; line-height: 18px; letter-spacing: 0.195px; color: var(--color-text-primary);
+}
+.handoff-head {
+  display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 12px;
+  border-bottom: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-subtle);
+}
+.handoff-arrow { color: var(--color-text-quaternary); }
+.handoff-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
+.handoff-title code { font-family: var(--font-mono-stack); font-size: 11.5px; letter-spacing: 0; color: var(--color-text-secondary); }
+.handoff-state {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; height: 20px; padding: 0 8px; border-radius: var(--radius-full);
+  font-size: 11px; line-height: 16px; letter-spacing: 0.11px; white-space: nowrap;
+  background: var(--color-bg-tertiary); color: var(--color-text-secondary);
+}
+.handoff-state.is-wait { background: var(--color-warn-bg); color: var(--color-warn-text); }
+.handoff-state.is-done { background: var(--color-success-bg); color: var(--color-success-text); }
+.handoff-state.is-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.handoff-state .step__spin { width: 9px; height: 9px; border-color: var(--color-warn-bg); border-top-color: var(--color-warn-text); }
+.handoff-body { display: grid; gap: 8px; padding: 10px 12px; }
+.handoff-kv { display: grid; grid-template-columns: 64px 1fr; gap: 8px; font-size: 12.5px; line-height: 18px; }
+.handoff-kv__k { color: var(--color-text-quaternary); }
+.handoff-kv__v { min-width: 0; color: var(--color-text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.handoff-foot {
+  display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-top: 0.5px solid var(--color-border-tertiary);
+  font-size: 11px; line-height: 16px; letter-spacing: 0.11px; color: var(--color-text-quaternary);
+}
+.handoff-link { padding: 0; background: none; border: 0; font: inherit; color: var(--color-text-secondary); cursor: pointer; }
+.handoff-link:hover { color: var(--color-text-primary); text-decoration: underline; text-underline-offset: 2px; }
+.handoff-foot__time { margin-left: auto; font-variant-numeric: tabular-nums; }
+
 /* ---------- live thinking block: mascot on a dark pill, caption, timer ---------- */
 .thinking {
   --thinking-pill: #1C1C1C; --thinking-name: #FFFFFF; --thinking-status: #FFFFFF99;

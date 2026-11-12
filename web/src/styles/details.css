@@ -152,6 +152,9 @@
 .toggle__knob { width: 16px; height: 16px; border-radius: 50%; background: #FFFFFF; box-shadow: #1C1C1C1F 0 1px 3px; transition: transform 200ms var(--ease-out); }
 .toggle.is-on { background: var(--bot-action, var(--color-primary)); }
 .toggle.is-on .toggle__knob { transform: translateX(12px); }
+.toggle.is-readonly { cursor: default; opacity: 0.85; }
+.toggle.is-readonly.is-on { background: var(--color-success); }
+.drow--route .drow__title { font-weight: 450; }
 
 .mini-select { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 2px 4px 2px 6px; border-radius: 8px; border: 1px solid var(--color-border-tertiary); font-size: 13px; line-height: 18px; letter-spacing: -0.08px; color: var(--color-ink); }
 
@@ -190,4 +193,33 @@
 .engine__state { display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .engine__notice { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px; border-top: 0.5px solid var(--color-border-tertiary); font-size: 12px; line-height: 16px; letter-spacing: 0.12px; color: var(--color-text-secondary); }
 .engine__error { padding: 0 8px 8px; font-size: 12px; line-height: 16px; color: var(--color-danger); overflow-wrap: anywhere; }
+.engine__hint { padding: 6px 8px 8px; font-size: 11.5px; line-height: 15px; color: var(--color-text-quaternary); }
+.engine__hint--note { margin: 2px 8px 8px; padding: 8px 10px; border: 0.5px dashed var(--color-border-secondary); border-radius: 8px; color: var(--color-text-tertiary); }
+
+/* engine groups (mockup `.group` + `.field`/`.select`/`.chips`): Hermes home · Tool allowlist */
+.engine-group { display: flex; flex-direction: column; padding: 8px 4px 0 8px; border-top: 0.5px solid var(--color-border-tertiary); margin-top: 4px; }
+.engine-group__h { padding: 2px 0 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-quaternary); }
+.field { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 36px; padding: 6px 0; border-bottom: 0.5px solid var(--color-border-tertiary); font-size: 13px; line-height: 18px; }
+.field:last-child { border-bottom: 0; }
+.field__lab { flex: none; color: var(--color-text-secondary); }
+.field__mono, .field__input { font-family: var(--font-mono-stack); font-size: 12px; line-height: 18px; color: var(--color-ink); }
+.field__mono { min-width: 0; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.field__ctl { display: flex; align-items: center; gap: 6px; flex: 1 1 0; min-width: 0; justify-content: flex-end; }
+.field__input { flex: 1 1 0; min-width: 0; max-width: 220px; height: 26px; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-secondary); background: var(--color-bg-elevated); text-overflow: ellipsis; }
+.field__input::placeholder { color: var(--color-text-quaternary); }
+.field__input:focus { outline: none; border-color: var(--color-border-focus); box-shadow: 0 0 0 3px #1E86FC22; }
+.field__input[aria-invalid='true'] { border-color: var(--color-danger); }
+.field--edit .btn { height: 26px; padding: 0 10px; flex: none; }
+.field--edit .btn:disabled { opacity: 0.45; cursor: default; }
+.select { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-secondary); background: var(--color-bg-elevated); font-size: 12px; line-height: 16px; color: var(--color-ink); }
+.select--static { color: var(--color-text-secondary); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 2px; }
+.chip {
+  font-size: 11.5px; line-height: 16px; padding: 3px 8px; border-radius: var(--radius-full); border: 1px solid var(--color-border-secondary);
+  color: var(--color-text-secondary); background: transparent; transition: background-color 120ms var(--ease-out), color 120ms, border-color 120ms;
+}
+.chip:hover:not(:disabled) { background: var(--color-bg-hover); color: var(--color-ink); }
+.chip.is-on { background: var(--bot-action-soft, var(--color-bg-active)); color: var(--bot-action-text, var(--color-ink)); border-color: transparent; }
+.chip.is-off { color: var(--color-text-quaternary); text-decoration: line-through; }
+.chip:disabled { cursor: default; opacity: 0.6; }
 @media (prefers-reduced-motion: reduce) { .engine__state.is-starting i { animation: none; } }

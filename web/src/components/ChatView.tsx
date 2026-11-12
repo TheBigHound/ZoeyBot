@@ -5,6 +5,7 @@ import { botVars } from '../lib/colors';
 import { sortedRows, useSelectedBot, useStore } from '../store';
 import { useConfigUI } from '../configStore';
 import { voiceApi, type VoiceOptions } from '../voice/api';
+import { AlertStrip } from './AlertStrip';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
 import { Menu } from './Menu';
@@ -74,6 +75,7 @@ export function ChatView() {
           </span>
         </div>
       </header>
+      <AlertStrip />
       <Transcript bot={bot} rows={rows} live={live} loaded={!!transcript?.loaded} />
       <VoiceCallBar />
       <Composer bot={bot} running={!!live?.isRunning} />
