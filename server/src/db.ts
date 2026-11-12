@@ -153,6 +153,9 @@ addColumn('bots', 'provider', 'TEXT');
 addColumn('bots', 'engine', 'TEXT');
 addColumn('bots', 'engine_port', 'INTEGER');
 addColumn('bots', 'handback_at', 'INTEGER');
+// Host mode: each bot's working directory and tool allowlist (JSON array of Hermes toolset names).
+addColumn('bots', 'cwd', 'TEXT');
+addColumn('bots', 'toolsets', 'TEXT');
 addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');
 

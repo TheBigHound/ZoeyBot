@@ -191,9 +191,10 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
   const model = engine?.model ?? bot.model;
   const provider = providerName(engine) ?? bot.provider;
   const providerOk = engine ? engine.status === 'ready' && (engine.providers?.find((p) => p.id === engine.provider)?.connected ?? true) : false;
-  const running = computer?.status === 'running';
-  const waking = computer?.status === 'starting' || computer?.status === 'resuming' || computer?.status === 'creating';
-  const stateText = computerStatusText(computer);
+  const host = engine?.execution === 'host';
+  const running = host ? engine?.status === 'ready' : computer?.status === 'running';
+  const waking = host ? engine?.status === 'starting' : (computer?.status === 'starting' || computer?.status === 'resuming' || computer?.status === 'creating');
+  const stateText = host ? (engine?.status === 'ready' ? 'On this Mac' : engine?.status === 'starting' ? 'Starting…' : 'Agent stopped') : computerStatusText(computer);
   const doing = doingNow(live, rows);
   const enabledCount = routines?.filter((r) => r.enabled).length ?? 0;
   const upNext = (routines ?? []).slice(0, 4);
@@ -209,9 +210,9 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
   return (
     <aside className="details" style={botVars(bot.avatarColor)} aria-label="Conversation details">
       <div className="details__top">
-        <span className="details__title" title={isRoom ? displayName(bot) : `${bot.name}’s computer`}>{isRoom ? displayName(bot) : `${bot.name}’s computer`}</span>
+        <span className="details__title" title={isRoom ? displayName(bot) : host ? `${bot.name}’s workspace` : `${bot.name}’s computer`}>{isRoom ? displayName(bot) : host ? `${bot.name}’s workspace` : `${bot.name}’s computer`}</span>
         <span className="details__sp" />
-        {!isRoom && (
+        {!isRoom && !host && (
           <button type="button" className="icon-btn details__iconbtn" onClick={popOut} aria-label="Pop out" title="Open the large view">
             <PopOutGlyph />
           </button>
@@ -231,6 +232,7 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
         </div>
       ) : (
         <div className="details__fixed">
+          {!host && (
           <div className={`details__screen${running ? ' is-running' : ''}`}>
             <ComputerScreen bot={bot} variant="panel" paused={viewerOpen} onExpand={openComputer} />
             {/* The stream's own phase-accurate "Live" badge (inside ComputerScreen) is the only live indicator; VM status alone is not a live frame. */}
@@ -240,6 +242,7 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
             {doing && <span className="details__doing" title={doing}><i aria-hidden />{doing}</span>}
             <button type="button" className="details__openbtn" onClick={() => openComputer('watch')}>Open <Icon name="chev_right" size={10} opacity={0.8} /></button>
           </div>
+          )}
           <div className="details__ident">
             <span className="details__ident-avatar">
               <BotAvatarFor bot={bot} size={36} />
@@ -250,6 +253,8 @@ function DetailsPanelFor({ bot }: { bot: Bot }) {
               <div className="details__ident-sub">
                 <i className={`okdot${running ? '' : waking ? ' is-warn' : ' is-off'}`} aria-hidden />
                 <span>{stateText}</span>
+                {host && doing && <><span className="details__sep">·</span><span>{doing}</span></>}
+                {host && engine?.cwd && <><span className="details__sep">·</span><code className="details__code" title={engine.cwd}>{engine.cwd.replace(/^\/Users\/[^/]+/, '~')}</code></>}
                 {model && <><span className="details__sep">·</span><code className="details__code" title={model}>{model}</code></>}
                 {provider && <><span className="details__sep">·</span><span className="details__provider">{provider}</span></>}
               </div>

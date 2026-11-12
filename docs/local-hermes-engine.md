@@ -62,3 +62,35 @@ The existing per-bot Engine settings API stores `provider` and `model` in the da
 - `tests/engine-local.test.ts` plus `tests/vm-backend.test.ts` and server typecheck pass. Test-runner Node deprecation warnings are environmental, not failed assertions.
 
 Official references consulted: Hermes documentation pages `user-guide/configuration`, `integrations/providers`, `user-guide/features/api-server`, and the installed CLI, gateway, terminal-SSH, and configuration-guard sources. The local compatibility adapter and platform limits above are based on actual execution, not a claim that upstream provides a dedicated shared-runtime flag.
+
+## Host mode (current)
+
+The VM is gone. Every bot's Hermes gateway runs on the macOS host itself: one Hermes home per bot, each with its own working directory and its own tool allowlist. `scripts/local-services.py` now manages exactly three launchd jobs, started in this order: `ollama`, `web`, `engine`. There is no `tunnels` job, no UTM start, no SSH readiness check, and `stop --shutdown-vm` no longer exists. An older `data/launchd/config.json` that still carries `vm_uuid`/`utmctl`/`key`/`known_hosts` loads fine (the keys are ignored) so `install` can simply be re-run.
+
+### Environment
+
+| Variable | Meaning |
+| --- | --- |
+| `HQ_HOST=1` | Host mode. Mutually exclusive with `HQ_VM=1` and `HQ_LOCAL=1` (the server refuses to start with both). Sets `env.hostMode`; `env.vmBox` and `env.localBox` are both `false`. |
+| `HERMES_HOME_PRIMARY` | The primary bot's home (`data/primary-hermes`). Still managed outside the app: never rewritten or restarted by Bot HQ. |
+| `HERMES_BIN`, `HERMES_URL`, `ENGINES_DIR`, `ENGINE_PORT_BASE`, `MCP_BASE_URL` | Unchanged. Managed homes live under `ENGINES_DIR/<botId>`. |
+
+In host mode the server binds `127.0.0.1`, `DEV_LOGIN` is implied, `XAI_API_KEY`/`COMPOSIO_API_KEY`/`ORGO_API_KEY` are optional, and `orgoComputerId` is empty: there are no screens, `screenForWork` returns immediately, and `writeHome` never calls `screenFor`/CDP.
+
+### Per-bot settings
+
+Two nullable columns on `bots`: `cwd TEXT` and `toolsets TEXT` (a JSON array of Hermes toolset names). They are edited through `PATCH /api/bots/:id/engine` (the same route as `model`/`provider`) and read back on `GET /api/bots/:id/engine`, whose `EngineInfo` now also carries `home`, `cwd` (effective), `toolsets` (effective) and `execution: 'host' | 'vm' | 'orgo'`.
+
+- `cwd` must be an absolute, existing directory; otherwise HTTP 400. Unset means `<home>/workspace` (created on write).
+- `toolsets` must contain only known names: `terminal, file, web, browser, skills, todo, memory, vision, code_execution, delegation, chat_history_lookup, cronjob, image_gen, x_search` (`clarify` is rejected: useless over the API). An empty list clears back to the default `['terminal','file','web','browser','skills','todo','memory','vision']`.
+- For a **managed** bot a change rewrites the home (`hermes config set --force …`) and restarts its gateway. For the **primary** bot the values are only stored and the response carries a `note` saying so; set that agent's config by hand.
+
+What `writeHome` produces for a managed bot in host mode: `terminal: { backend: local, cwd }`, `platform_toolsets.api_server = <bot toolsets>`, `browser.use_real_profile = false`, the `hq` MCP server, the `api_server` platform on the bot's port, `.env` with `API_SERVER_KEY` and `HQ_MCP_TOKEN` plus the model credentials inherited from the primary home (`SHARED_ENV`: Anthropic/OpenAI/… keys, never messaging tokens), and `auth.json` copied from the primary home on first write so every bot can use the same subscription.
+
+### No longer true
+
+- Managed homes do **not** use the ssh terminal backend; no `bin/ssh`/`bin/scp` wrappers are written (stale ones are removed on the next write).
+- Toolsets are **not** restricted to the guest-only `terminal, file, todo`; each bot has its own allowlist.
+- `engineFor('primary')` no longer refuses a plain local config: the `vmHomeSafe` gate became `homeSafe`, which only enforces the SSH policy when `HQ_VM=1`.
+- Credentials **are** inherited from the primary home (the VM-only "never inherit" rule applies only under `HQ_VM=1`).
+- `vmEngineSettings` / `sshWrapper` remain exported but are dead code outside VM mode.

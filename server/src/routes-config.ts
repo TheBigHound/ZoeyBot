@@ -12,7 +12,7 @@ import { computerState, readyScreen, resetBotScreen } from './computer.js';
 import { box } from './box.js';
 import { orgo } from './orgo.js';
 import { openTerminal } from './desk.js';
-import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, stopOwnScreen } from './engine.js';
+import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, stopOwnScreen, updateEngineSettings } from './engine.js';
 import { listMemories } from './engine-memory.js';
 import { idleConfig, viewerCount } from './idle.js';
 import type { LibraryFile, Skill } from './types.js';
@@ -122,16 +122,30 @@ configApi.get('/bots/:id/engine', async (c) => {
   return c.json({ engine: await engineInfo(b.id) });
 });
 
-/** Which model this bot's turns ask for. Empty values go back to the agent's own default. */
+/**
+ * Which model this bot's turns ask for, and (host mode) where its tools work and which tools it has.
+ * Empty values go back to the agent's own default. cwd/toolsets changes restart a managed bot's gateway.
+ */
 configApi.patch('/bots/:id/engine', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const p = await c.req.json<{ provider?: string | null; model?: string | null }>().catch(() => ({} as { provider?: string | null; model?: string | null }));
+  type Patch = { provider?: string | null; model?: string | null; cwd?: string | null; toolsets?: string[] | null };
+  const p = await c.req.json<Patch>().catch(() => ({} as Patch));
   const clean = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 120) : null);
   if (p.provider !== undefined) db.prepare('UPDATE bots SET provider=?, updated_at=? WHERE id=?').run(clean(p.provider), now(), b.id);
   if (p.model !== undefined) db.prepare('UPDATE bots SET model=?, updated_at=? WHERE id=?').run(clean(p.model), now(), b.id);
+  let note: string | null = null;
+  if (p.cwd !== undefined || p.toolsets !== undefined) {
+    try {
+      note = (await updateEngineSettings(b.id, { ...(p.cwd !== undefined ? { cwd: p.cwd } : {}), ...(p.toolsets !== undefined ? { toolsets: p.toolsets } : {}) })).note;
+      forgetEngineOptions(b.id);
+    } catch (e: any) {
+      emitBot(b.id);
+      return c.json({ error: String(e?.message ?? e).slice(0, 300) }, e?.status === 400 ? 400 : 502);
+    }
+  }
   emitBot(b.id);
-  return c.json({ engine: await engineInfo(b.id) });
+  return c.json({ engine: await engineInfo(b.id), ...(note ? { note } : {}) });
 });
 
 /**

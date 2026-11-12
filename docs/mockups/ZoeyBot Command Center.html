@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ZoeyBot</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg-chrome:#121212;--bg-sidebar:#0E0E0E;--bg-pane:#161616;--bg-elevated:#1F1F1F;
+  --bg-active:#F5F5F514;--bg-tertiary:#F5F5F50A;--bg-hover:#F5F5F50F;--bg-subtle:#F5F5F505;
+  --ink:#F5F5F5;--text-2:#F5F5F5A8;--text-3:#F5F5F58A;--text-4:#F5F5F561;
+  --border-2:#F5F5F51A;--border-3:#F5F5F50F;
+  --pink:#F93498;--blue:#1E86FC;--red:#FB2B3E;--orange:#FD690F;--yellow:#F59312;--green:#14C16F;--teal:#13B7A2;--purple:#8F59F9;--gray:#999;
+  --success:#00BA69;--warn:#E28600;--danger:#FF6463;
+  --success-bg:#14C3701F;--warn-bg:#F694121F;--danger-bg:#FC2C3E1F;
+  --bubble-agent:#F5F5F50F;--bubble-user:#F5F5F52E;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --r-sm:8px;--r-md:12px;--r-bubble:18px;--r-composer:22px;--r-full:9999px;
+  --hq-zoom:1;
+}
+@media (min-width:1900px){:root{--hq-zoom:1.25}}
+@media (min-width:2300px){:root{--hq-zoom:1.5}}
+@media (min-width:3000px){:root{--hq-zoom:1.75}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg-chrome);color:var(--ink);font:425 14px/1.45 var(--font);-webkit-font-smoothing:antialiased}
+.app{zoom:var(--hq-zoom);height:100vh;display:grid;grid-template-columns:272px 1fr 360px;grid-template-rows:1fr}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+.mono{font-family:var(--mono);font-size:12px}
+.muted{color:var(--text-3)}
+.dim{color:var(--text-4)}
+
+/* ---------- sidebar ---------- */
+.side{background:var(--bg-sidebar);border-right:1px solid var(--border-3);display:flex;flex-direction:column;min-height:0}
+.side-head{padding:16px 16px 10px;display:flex;align-items:center;justify-content:space-between}
+.brand{font-weight:600;font-size:15px;letter-spacing:-.01em}
+.brand small{display:block;font-weight:425;color:var(--text-4);font-size:11px;margin-top:2px}
+.host-pill{font-size:11px;color:var(--text-3);border:1px solid var(--border-2);border-radius:var(--r-full);padding:3px 8px}
+.host-pill b{color:var(--success);font-weight:600}
+.section{padding:12px 16px 6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-4)}
+.roster{display:flex;flex-direction:column;gap:2px;padding:0 8px}
+.bot{display:grid;grid-template-columns:30px 1fr auto;gap:10px;align-items:center;padding:8px 8px;border-radius:var(--r-md);text-align:left;width:100%}
+.bot:hover{background:var(--bg-hover)}
+.bot.active{background:var(--bg-active)}
+.avatar{width:30px;height:30px;border-radius:var(--r-full);display:grid;place-items:center;font-weight:600;font-size:12px;color:#fff;background:var(--c)}
+.bot-name{font-weight:500;font-size:13px;display:flex;gap:6px;align-items:center}
+.bot-sub{font-size:11px;color:var(--text-4);margin-top:1px;display:flex;gap:6px;align-items:center}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--text-4);display:inline-block}
+.dot.on{background:var(--success)}
+.dot.busy{background:var(--warn);animation:pulse 1.4s ease-in-out infinite}
+.dot.sched{background:var(--blue)}
+@keyframes pulse{50%{opacity:.35}}
+.badge{min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-full);background:var(--bg-active);font-size:11px;display:grid;place-items:center;color:var(--text-2)}
+.badge.alert{background:var(--danger-bg);color:var(--danger)}
+.side-foot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--border-3);font-size:11px;color:var(--text-4);display:flex;flex-direction:column;gap:4px}
+.side-foot span b{color:var(--text-2);font-weight:500}
+
+/* ---------- center ---------- */
+.main{background:var(--bg-pane);display:flex;flex-direction:column;min-height:0;min-width:0}
+.chat-head{height:56px;border-bottom:1px solid var(--border-3);display:flex;align-items:center;gap:12px;padding:0 20px}
+.chat-head .avatar{width:28px;height:28px;font-size:11px}
+.chat-title{font-weight:600;font-size:14px}
+.chat-title small{display:block;font-weight:425;font-size:11px;color:var(--text-4)}
+.head-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:var(--r-full);border:1px solid var(--border-2);font-size:12px;color:var(--text-2)}
+.pill.live{border-color:transparent;background:var(--pink);color:#fff;font-weight:500}
+.pill .dot{background:#fff}
+.alert-strip{display:flex;align-items:center;gap:10px;padding:8px 20px;background:var(--warn-bg);border-bottom:1px solid var(--border-3);font-size:12.5px}
+.alert-strip .who{font-weight:600;color:var(--warn)}
+.alert-strip .via{margin-left:auto;color:var(--text-4);font-size:11px}
+.transcript{flex:1;overflow:auto;padding:24px 20px 12px;display:flex;flex-direction:column;gap:14px;max-width:860px;width:100%;margin:0 auto}
+.row{display:flex;flex-direction:column;gap:4px;max-width:78%}
+.row.user{align-self:flex-end;align-items:flex-end}
+.bubble{padding:10px 14px;border-radius:var(--r-bubble);font-size:15px;line-height:1.45}
+.row.agent .bubble{background:var(--bubble-agent);border-bottom-left-radius:6px}
+.row.user .bubble{background:var(--bubble-user);border-bottom-right-radius:6px}
+.meta{font-size:11px;color:var(--text-4);padding:0 6px}
+.handoff{align-self:stretch;max-width:100%;border:1px solid var(--border-2);border-radius:var(--r-md);background:var(--bg-elevated);overflow:hidden;font-size:13px}
+.handoff-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-3);background:var(--bg-subtle)}
+.handoff-head .avatar{width:20px;height:20px;font-size:9px}
+.arrow{color:var(--text-4)}
+.handoff-head .state{margin-left:auto;font-size:11px;padding:2px 8px;border-radius:var(--r-full)}
+.state.wait{background:var(--warn-bg);color:var(--warn)}
+.state.done{background:var(--success-bg);color:var(--success)}
+.handoff-body{padding:10px 12px;display:grid;gap:8px}
+.kv{display:grid;grid-template-columns:72px 1fr;gap:8px;font-size:12.5px}
+.kv dt{color:var(--text-4)}
+.kv dd{margin:0;color:var(--text-2)}
+.handoff-foot{padding:8px 12px;border-top:1px solid var(--border-3);display:flex;gap:12px;font-size:11px;color:var(--text-4)}
+.handoff-foot a{color:var(--text-2);text-decoration:none}
+.src{display:inline-flex;gap:6px;align-items:center;font-size:11px;color:var(--text-4);font-family:var(--mono)}
+.composer{margin:8px auto 18px;width:calc(100% - 40px);max-width:860px;border:1px solid var(--border-2);border-radius:var(--r-composer);background:var(--bg-elevated);display:grid;grid-template-columns:1fr auto auto auto;align-items:center;padding:6px 6px 6px 16px;gap:4px}
+.composer .ph{color:var(--text-4);font-size:15px}
+.ic{width:34px;height:34px;border-radius:var(--r-full);display:grid;place-items:center;color:var(--text-2)}
+.ic:hover{background:var(--bg-hover)}
+.ic.primary{background:var(--pink);color:#fff}
+.ic svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* ---------- details ---------- */
+.details{background:var(--bg-sidebar);border-left:1px solid var(--border-3);display:flex;flex-direction:column;min-height:0}
+.tabs{display:flex;gap:2px;padding:12px 12px 0;border-bottom:1px solid var(--border-3)}
+.tab{padding:8px 10px;font-size:12.5px;color:var(--text-3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.on{color:var(--ink);border-color:var(--ink);font-weight:500}
+.panel{overflow:auto;padding:14px 16px 20px;display:flex;flex-direction:column;gap:18px}
+.group h4{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-4)}
+.field{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-3);font-size:13px}
+.field:last-child{border-bottom:0}
+.field .lab{color:var(--text-2)}
+.select{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-2);border-radius:var(--r-sm);padding:4px 8px;font-size:12px;color:var(--ink);background:var(--bg-elevated)}
+.select::after{content:"";width:6px;height:6px;border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(45deg) translateY(-2px)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-size:11.5px;padding:3px 8px;border-radius:var(--r-full);border:1px solid var(--border-2);color:var(--text-2)}
+.chip.on{background:var(--bg-active);color:var(--ink);border-color:transparent}
+.chip.off{color:var(--text-4);text-decoration:line-through}
+.route{display:grid;grid-template-columns:1fr auto;gap:6px 10px;font-size:12.5px;align-items:center}
+.route .to{color:var(--text-2)}
+.toggle{width:30px;height:18px;border-radius:var(--r-full);background:var(--bg-active);position:relative;flex:none}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--text-3)}
+.toggle.on{background:var(--success)}
+.toggle.on::after{left:14px;background:#fff}
+.activity{display:flex;flex-direction:column;gap:10px}
+.ev{display:grid;grid-template-columns:16px 1fr auto;gap:8px;font-size:12.5px;align-items:start}
+.ev .t{color:var(--text-4);font-size:11px;font-family:var(--mono)}
+.ev .sw{width:8px;height:8px;border-radius:50%;margin-top:5px;background:var(--c)}
+.ev .what{color:var(--text-2)}
+.ev .what b{color:var(--ink);font-weight:500}
+.note{font-size:11.5px;color:var(--text-4);line-height:1.4;padding:10px 12px;border:1px dashed var(--border-2);border-radius:var(--r-sm)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ================= SIDEBAR ================= -->
+  <aside class="side">
+    <div class="side-head">
+      <div class="brand">ZoeyBot<small>Command center · Mac host</small></div>
+      <span class="host-pill"><b>●</b> 7 homes</span>
+    </div>
+
+    <div class="section">Bots</div>
+    <div class="roster">
+      <button class="bot active" style="--c:var(--pink)">
+        <span class="avatar">Z</span>
+        <span><span class="bot-name">Zoey</span><span class="bot-sub"><i class="dot on"></i> Voice · claude-opus-5-5</span></span>
+        <span class="badge">2</span>
+      </button>
+      <button class="bot" style="--c:var(--blue)">
+        <span class="avatar">C</span>
+        <span><span class="bot-name">Coder</span><span class="bot-sub"><i class="dot busy"></i> Waiting on Researcher · claude-opus-5-5</span></span>
+        <span class="badge">1</span>
+      </button>
+      <button class="bot" style="--c:var(--teal)">
+        <span class="avatar">R</span>
+        <span><span class="bot-name">Researcher</span><span class="bot-sub"><i class="dot busy"></i> Running task #41 · qwen3.5:35b</span></span>
+      </button>
+      <button class="bot" style="--c:var(--green)">
+        <span class="avatar">M</span>
+        <span><span class="bot-name">Market Watch</span><span class="bot-sub"><i class="dot sched"></i> Every 15 min · qwen3.5:35b</span></span>
+        <span class="badge alert">!</span>
+      </button>
+      <button class="bot" style="--c:var(--yellow)">
+        <span class="avatar">E</span>
+        <span><span class="bot-name">Email Triage</span><span class="bot-sub"><i class="dot sched"></i> Hourly · drafts only · qwen3.5:35b</span></span>
+        <span class="badge">3</span>
+      </button>
+      <button class="bot" style="--c:var(--purple)">
+        <span class="avatar">P</span>
+        <span><span class="bot-name">PC Builder</span><span class="bot-sub"><i class="dot"></i> Idle · claude-sonnet-5</span></span>
+      </button>
+      <button class="bot" style="--c:var(--orange)">
+        <span class="avatar">S</span>
+        <span><span class="bot-name">Sourcing</span><span class="bot-sub"><i class="dot"></i> Idle · claude-sonnet-5</span></span>
+      </button>
+    </div>
+
+    <div class="side-foot">
+      <span>Engine <b>7 Hermes homes · host</b></span>
+      <span>Speech <b>phonon / Zoey · local</b></span>
+      <span>Channels <b>Telegram · urgent only</b></span>
+    </div>
+  </aside>
+
+  <!-- ================= CENTER ================= -->
+  <main class="main">
+    <header class="chat-head">
+      <span class="avatar" style="--c:var(--pink)">Z</span>
+      <div class="chat-title">Zoey<small>Everyday assistant · routes handoffs</small></div>
+      <div class="head-right">
+        <span class="pill live"><i class="dot"></i> Mic live</span>
+        <span class="pill">Host · ~/</span>
+      </div>
+    </header>
+
+    <div class="alert-strip">
+      <span class="who">Market Watch</span>
+      <span>NVDA crossed your 2% drop threshold · 14:02</span>
+      <span class="src">finance.yahoo.com · read 14:02:11</span>
+      <span class="via">sent to Telegram</span>
+    </div>
+
+    <div class="transcript">
+      <div class="row user">
+        <div class="bubble">What's the researcher found on the Ryzen 9950X3D so far? And have the coder use it.</div>
+        <div class="meta">13:58 · spoken</div>
+      </div>
+
+      <div class="row agent">
+        <div class="bubble">Asking the Researcher now. Short question, so I'll wait for it.</div>
+      </div>
+
+      <div class="handoff">
+        <div class="handoff-head">
+          <span class="avatar" style="--c:var(--pink)">Z</span><span class="arrow">→</span>
+          <span class="avatar" style="--c:var(--teal)">R</span>
+          <span>ask_bot · Researcher · <span class="mono">wait=true</span></span>
+          <span class="state done">answered · 6.2s</span>
+        </div>
+        <div class="handoff-body">
+          <dl class="kv"><dt>Request</dt><dd>Summary of Ryzen 9 9950X3D findings so far</dd></dl>
+          <dl class="kv"><dt>Reply</dt><dd>Two retailer listings confirmed in stock; one review set collected; thermal data still pending. Full notes in Researcher task #41.</dd></dl>
+        </div>
+        <div class="handoff-foot"><a href="#">Open in Researcher</a><span>visible in both transcripts</span></div>
+      </div>
+
+      <div class="row agent">
+        <div class="bubble">Researcher has two in-stock listings and a review set; thermals are still pending. I've handed the "use it" part to the Coder as a task, since that's longer work — it'll post back here when done.</div>
+        <div class="meta">14:00 · spoken</div>
+      </div>
+
+      <div class="handoff">
+        <div class="handoff-head">
+          <span class="avatar" style="--c:var(--pink)">Z</span><span class="arrow">→</span>
+          <span class="avatar" style="--c:var(--blue)">C</span>
+          <span>ask_bot · Coder · <span class="mono">wait=false</span></span>
+          <span class="state wait">task #42 · running</span>
+        </div>
+        <div class="handoff-body">
+          <dl class="kv"><dt>Request</dt><dd>Add the 9950X3D entry to the parts database using Researcher task #41</dd></dl>
+          <dl class="kv"><dt>Working in</dt><dd class="mono">~/pc-parts-db · branch zoey/9950x3d</dd></dl>
+        </div>
+        <div class="handoff-foot"><a href="#">Open in Coder</a><span>result will post here</span></div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <span class="ph">Message Zoey, or hold to talk…</span>
+      <button class="ic" title="Attach"><svg viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a6 6 0 0 1-8.5-8.5L13 3.5a4 4 0 0 1 5.7 5.7L10 18a2 2 0 0 1-2.8-2.8L15 7.5"/></svg></button>
+      <button class="ic" title="Dictate"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <button class="ic primary" title="Voice conversation"><svg viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4"/></svg></button>
+    </div>
+  </main>
+
+  <!-- ================= DETAILS ================= -->
+  <aside class="details">
+    <div class="tabs">
+      <span class="tab">Activity</span>
+      <span class="tab on">Engine</span>
+      <span class="tab">Routines</span>
+      <span class="tab">Channels</span>
+      <span class="tab">Library</span>
+    </div>
+
+    <div class="panel">
+      <div class="group">
+        <h4>Zoey · Hermes home</h4>
+        <div class="field"><span class="lab">Home</span><span class="mono">data/homes/zoey</span></div>
+        <div class="field"><span class="lab">Execution</span><span class="select">Mac host</span></div>
+        <div class="field"><span class="lab">Working dir</span><span class="mono">~/</span></div>
+        <div class="field"><span class="lab">Provider</span><span class="select">Claude subscription</span></div>
+        <div class="field"><span class="lab">Model</span><span class="select">claude-opus-5-5</span></div>
+        <div class="field"><span class="lab">Voice</span><span class="select">phonon · Zoey</span></div>
+      </div>
+
+      <div class="group">
+        <h4>Tool allowlist</h4>
+        <div class="chips">
+          <span class="chip on">ask_bot</span><span class="chip on">web_search</span><span class="chip on">browser</span>
+          <span class="chip on">calendar</span><span class="chip on">read_file</span>
+          <span class="chip off">terminal</span><span class="chip off">git</span><span class="chip off">gmail</span>
+        </div>
+      </div>
+
+      <div class="group">
+        <h4>Can ask</h4>
+        <div class="chips">
+          <span class="chip on">Coder</span><span class="chip on">Researcher</span><span class="chip on">Market Watch</span>
+          <span class="chip on">Email Triage</span><span class="chip on">PC Builder</span><span class="chip on">Sourcing</span>
+        </div>
+      </div>
+
+      <div class="group">
+        <h4>Alert routing</h4>
+        <div class="route">
+          <span class="to">Urgent → Telegram</span><span class="toggle on"></span>
+          <span class="to">Digest → Dashboard inbox</span><span class="toggle on"></span>
+          <span class="to">Speak aloud when audio enabled</span><span class="toggle on"></span>
+          <span class="to">macOS notifications</span><span class="toggle"></span>
+        </div>
+      </div>
+
+      <div class="group">
+        <h4>Recent bot-to-bot</h4>
+        <div class="activity">
+          <div class="ev" style="--c:var(--pink)"><i class="sw"></i><span class="what"><b>Zoey → Coder</b> task #42 created</span><span class="t">14:00</span></div>
+          <div class="ev" style="--c:var(--pink)"><i class="sw"></i><span class="what"><b>Zoey → Researcher</b> answered in 6.2s</span><span class="t">13:59</span></div>
+          <div class="ev" style="--c:var(--blue)"><i class="sw"></i><span class="what"><b>Coder → Researcher</b> "which retailer has stock?" · 3.1s</span><span class="t">13:51</span></div>
+          <div class="ev" style="--c:var(--green)"><i class="sw"></i><span class="what"><b>Market Watch</b> alert → Telegram · NVDA</span><span class="t">14:02</span></div>
+          <div class="ev" style="--c:var(--yellow)"><i class="sw"></i><span class="what"><b>Email Triage</b> 3 drafts saved, 11 archived</span><span class="t">13:30</span></div>
+        </div>
+      </div>
+
+      <div class="note">All names, prices and timings here are illustrative. Shipped UI shows only values read from real sources with URL + read time.</div>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

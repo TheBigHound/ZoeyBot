@@ -20,11 +20,18 @@ function secret(name: string): string {
 const hermesHome = process.env.HERMES_HOME_PRIMARY ?? path.join(os.homedir(), '.hermes');
 
 const vmBox = process.env.HQ_VM === '1';
+/** Host mode: every bot's Hermes gateway runs on this macOS host, one home per bot, no VM and no screens. */
+const hostMode = process.env.HQ_HOST === '1';
 if (vmBox && process.env.HQ_LOCAL === '1') throw new Error('HQ_VM and HQ_LOCAL are mutually exclusive');
+if (hostMode && vmBox) throw new Error('HQ_HOST and HQ_VM are mutually exclusive');
+if (hostMode && process.env.HQ_LOCAL === '1') throw new Error('HQ_HOST and HQ_LOCAL are mutually exclusive');
+/** Modes that run on this machine without cloud credentials. */
+const onThisMachine = vmBox || hostMode;
 
 export const env = {
   vmBox,
-  hostname: vmBox ? '127.0.0.1' : (process.env.HOST ?? '0.0.0.0'),
+  hostMode,
+  hostname: onThisMachine ? '127.0.0.1' : (process.env.HOST ?? '0.0.0.0'),
   vmHost: process.env.HQ_VM_HOST ?? '127.0.0.1',
   vmPort: Number(process.env.HQ_VM_PORT ?? 2222),
   vmUser: process.env.HQ_VM_USER ?? 'bot',
@@ -34,12 +41,12 @@ export const env = {
   appUrl: process.env.APP_URL ?? 'http://localhost:5173',
   /** Public URL of this server, used for OAuth callbacks. */
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
-  xaiKey: vmBox ? (process.env.XAI_API_KEY ?? '') : req('XAI_API_KEY'),
+  xaiKey: onThisMachine ? (process.env.XAI_API_KEY ?? '') : req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
-  composioKey: vmBox ? (process.env.COMPOSIO_API_KEY ?? '') : req('COMPOSIO_API_KEY'),
-  orgoKey: vmBox ? '' : secret('ORGO_API_KEY'),
+  composioKey: onThisMachine ? (process.env.COMPOSIO_API_KEY ?? '') : req('COMPOSIO_API_KEY'),
+  orgoKey: onThisMachine ? '' : secret('ORGO_API_KEY'),
   sessionSecret: req('SESSION_SECRET'),
-  devLogin: vmBox || process.env.DEV_LOGIN === '1',
+  devLogin: onThisMachine || process.env.DEV_LOGIN === '1',
   dbPath: process.env.DB_PATH ?? new URL('../../data/grokbot.db', import.meta.url).pathname,
 
   // ---- Hermes engine ----
@@ -61,7 +68,7 @@ export const env = {
 
   // ---- the one shared computer ----
   /** The Orgo computer every bot works on (one screen each). Empty = legacy one-box-per-user mode is not supported. */
-  orgoComputerId: vmBox ? 'utm-local' : (process.env.ORGO_COMPUTER_ID ?? ''),
+  orgoComputerId: hostMode ? '' : vmBox ? 'utm-local' : (process.env.ORGO_COMPUTER_ID ?? ''),
   /** This server runs on that computer, so shell commands run locally instead of through Orgo's API. */
   localBox: process.env.HQ_LOCAL === '1',
   /**

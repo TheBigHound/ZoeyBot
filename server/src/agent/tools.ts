@@ -15,8 +15,10 @@ import { Cron } from 'croner';
 export interface ToolCtx {
   userId: string;
   botId: string;
-  enqueueBotMessage: (fromBotId: string, toBotId: string, text: string, depth: number) => void;
+  /** How many bot-to-bot hops led to this turn (0 when the user or a routine started it). */
   depth: number;
+  /** ask_bot's machinery in the agent loop: post the request to the target, run its turn at hop `depth`, bring the answer back. */
+  askBot: (toBotId: string, request: string, wait: boolean, depth: number) => Promise<{ output: string; summary: string }>;
 }
 
 export interface ToolResult {
@@ -254,19 +256,24 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: 'send_to_bot',
-    description: "Send a message to another Bot on the user's team (by name) to delegate work or ask a question. Their reply will arrive later as a new message to you.",
-    parameters: obj({ bot_name: { type: 'string' }, message: { type: 'string' } }, ['bot_name', 'message']),
+    name: 'ask_bot',
+    description: "Ask another Bot on the user's team (by name) a question or hand them work. With wait=true (the default) the call blocks until they answer and returns their reply as the result: use it for questions and short jobs. With wait=false the request becomes a task on their side and the call returns at once; when they finish, their reply is posted into this chat as a message from them and you get a new turn: use it for long work, and do not poll or ask again meanwhile. Either way the exchange is visible in both chats.",
+    parameters: obj({
+      bot_name: { type: 'string' },
+      request: { type: 'string', description: 'What you need, with the context they need to do it well.' },
+      wait: { type: 'boolean', description: 'true (default): wait for the answer. false: let them work in the background and get the result later.' },
+    }, ['bot_name', 'request']),
     activity: 'messaging_named',
-    label: 'Messaging a Bot',
+    label: 'Asking a Bot',
     impl: async (a, ctx) => {
-      const target = botByName(ctx.userId, a.bot_name);
-      if (!target) return { output: `No bot named "${a.bot_name}". Team: ${(db.prepare('SELECT name FROM bots WHERE user_id=?').all(ctx.userId) as any[]).map((b) => b.name).join(', ')}` };
-      if (target.id === ctx.botId) return { output: 'That is you.' };
+      const target = botByName(ctx.userId, String(a.bot_name ?? ''));
+      if (!target) return { output: `No bot named "${a.bot_name}". Team: ${(db.prepare("SELECT name FROM bots WHERE user_id=? AND COALESCE(kind,'agent')<>'room' AND COALESCE(hidden,0)=0").all(ctx.userId) as any[]).map((b) => b.name).join(', ')}` };
+      if (target.id === ctx.botId) return { output: 'That is you. Do the work yourself.' };
       if (target.kind === 'room') return { output: `"${target.name}" is a group chat; use post_to_group instead.` };
-      if (ctx.depth >= 3) return { output: 'Too many hops between bots; answer the user directly instead.' };
-      ctx.enqueueBotMessage(ctx.botId, target.id, String(a.message), ctx.depth + 1);
-      return { output: `Sent to ${target.name}. Their reply will come back to you as a message.`, summary: `Messaged ${target.name}` };
+      if (ctx.depth >= 3) return { output: 'Too many hops between bots; answer with what you have instead of asking another bot.' };
+      const request = String(a.request ?? '').trim();
+      if (!request) return { output: 'Say what you need in `request`.' };
+      return ctx.askBot(target.id, request, a.wait !== false, ctx.depth + 1);
     },
   },
   {
@@ -386,12 +393,15 @@ export function appToolName(raw: string): { name: string; ours: boolean; server?
 const words = (s: string) => s.replace(/[_-]+/g, ' ').trim();
 const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** What to show while a tool runs. `raw` is the name Hermes reports. */
-export function activityFor(raw: string): { kind: ActivityKind; label: string; detail?: string } {
+/** What to show while a tool runs. `raw` is the name Hermes reports; `args` its parsed arguments when known. */
+export function activityFor(raw: string, args?: any): { kind: ActivityKind; label: string; detail?: string } {
   const { name, ours, server } = appToolName(raw);
   if (ours) {
     const t = toolMap.get(name);
-    if (t) return { kind: t.activity, label: t.label, ...(name === 'x_search' ? { detail: 'X' } : {}) };
+    if (t) {
+      const detail = name === 'x_search' ? 'X' : name === 'ask_bot' ? String(args?.bot_name ?? '').trim() || undefined : undefined;
+      return { kind: t.activity, label: t.label, ...(detail ? { detail } : {}) };
+    }
     return { kind: 'connecting_service', label: 'Using a connected app' };
   }
   if (server) return { kind: 'connecting_service', label: `Using ${words(server)}`, detail: sentence(words(server)) };

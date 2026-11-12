@@ -63,7 +63,7 @@ export function dispatchRoomMessage(roomId: string, text: string, enqueue: (botI
         `${mentioned.length ? 'You were @mentioned.' : 'The user addressed the whole group.'}\n` +
         `Recent group messages:\n${recent}\n\n` +
         `Reply to the group by calling post_to_group with group_name "${room.name}" (use your tools first if the request needs real work). ` +
-        `Keep it short and don't repeat what other Bots already said. If you have nothing to add, call stay_silent. Do not write a normal reply.`,
+        `Keep it short and don't repeat what other Bots already said. The other members read the group themselves, so do not relay group messages with ask_bot. If you have nothing to add, call stay_silent. Do not write a normal reply.`,
     });
   }
 }

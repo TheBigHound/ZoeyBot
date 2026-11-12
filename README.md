@@ -94,7 +94,7 @@ Hermes Desktop has its own Bot Mode. Bot HQ uses the same Hermes engine but does
 | Gateways | One per extra bot | One, serving every profile |
 | Transport | HTTP, `/v1/responses` | JSON-RPC over WebSocket |
 | Routines | The app's own scheduler | Hermes cron jobs |
-| Bot to bot | The app's `send_to_bot` tool | Hermes' `message_agent` tool |
+| Bot to bot | The app's `ask_bot` tool (blocking answer, or a task whose result is posted back) | Hermes' `message_agent` tool |
 
 So bots made here do not show up in Hermes Desktop's Bots tab, and bots made there do not show up here.
 

@@ -208,6 +208,14 @@ export interface EngineInfo {
   providers: EngineProvider[];
   /** Hermes is running a private screen of its own for this agent, so its computer work is not on the screen the app shows. */
   ownScreen: boolean;
+  /** The agent's Hermes home directory on the machine that runs it. */
+  home: string;
+  /** Effective working directory of the agent's terminal/file tools. */
+  cwd: string;
+  /** Effective toolset allowlist for the agent's API server (Hermes toolset names). */
+  toolsets: string[];
+  /** Where the agent's tools execute: this host, the (legacy) VM guest, or an Orgo computer. */
+  execution: 'host' | 'vm' | 'orgo';
 }
 
 /** Where a person can reach their bots: the web app, Telegram, Slack. Never carries secrets. */

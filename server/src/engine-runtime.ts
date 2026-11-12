@@ -1,5 +1,37 @@
 export interface VmEngineTarget { host: string; port: number; user: string; key: string }
 
+/** Hermes toolsets a bot's API server may be given (from hermes-agent's toolsets.py). `clarify` is useless over the API. */
+export const KNOWN_TOOLSETS = [
+  'terminal', 'file', 'web', 'browser', 'skills', 'todo', 'memory', 'vision',
+  'code_execution', 'delegation', 'chat_history_lookup', 'cronjob', 'image_gen', 'x_search',
+] as const;
+
+/** What a new bot gets on the host when nobody chose otherwise. */
+export const DEFAULT_TOOLSETS: string[] = ['terminal', 'file', 'web', 'browser', 'skills', 'todo', 'memory', 'vision'];
+
+/** Known toolset names only, de-duplicated, in the given order; an empty result falls back to DEFAULT_TOOLSETS. */
+export function validToolsets(list: unknown): string[] {
+  const known = new Set<string>(KNOWN_TOOLSETS);
+  const out: string[] = [];
+  for (const v of Array.isArray(list) ? list : []) {
+    if (typeof v !== 'string') continue;
+    const name = v.trim();
+    if (known.has(name) && !out.includes(name)) out.push(name);
+  }
+  return out.length ? out : [...DEFAULT_TOOLSETS];
+}
+
+/** Host mode: the gateway's tools run on this machine, in the bot's own directory, with the bot's own allowlist. */
+export function hostEngineSettings(config: any, opts: { cwd: string; toolsets: string[] }): any {
+  return {
+    ...config,
+    terminal: { ...(config.terminal ?? {}), backend: 'local', cwd: opts.cwd },
+    platform_toolsets: { ...(config.platform_toolsets ?? {}), api_server: [...opts.toolsets] },
+    // Each bot drives a browser of its own, never the person's signed-in Chrome profile.
+    browser: { ...(config.browser ?? {}), use_real_profile: false },
+  };
+}
+
 /** Ollama's tags endpoint includes speech/embedding models; only completion models belong in chat. */
 export async function ollamaChatModels(baseUrl: string, models: string[]): Promise<string[] | null> {
   try {

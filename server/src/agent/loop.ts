@@ -24,7 +24,16 @@ export type Trigger =
   | { type: 'user'; text: string }
   | { type: 'routine'; routineId: string; name: string; prompt: string }
   | { type: 'bot'; fromBotId: string; fromName: string; text: string; depth: number }
+  /**
+   * Another bot asked this one something with ask_bot. The turn's final reply goes back to the asker:
+   * as the tool result while it waits (`wait`), or, once it stopped waiting, posted into its
+   * conversation by deliverAsk (then `taskId` is the task that tracks the request on this bot).
+   */
+  | { type: 'ask'; askId: string; fromBotId: string; fromName: string; text: string; depth: number; wait: boolean; taskId?: string }
   | { type: 'system'; text: string };
+
+/** Pieces of the turn the app's own tools may swap out in tests (no engine, no screen). */
+export const loopDeps = { engineFor, screenForWork };
 
 // ---------- per-bot serial queue ----------
 
@@ -35,9 +44,23 @@ export function enqueue(botId: string, trigger: Trigger) {
   // A new message from the user supersedes whatever is waiting for their approval.
   if (trigger.type === 'user') expireApprovals(botId);
   const prev = queues.get(botId) ?? Promise.resolve();
-  const next = prev.then(() => runTurn(botId, trigger)).catch((e) => console.error('[agent] turn failed', botId, e));
+  // runTurn reports its own failures in the conversation and the log.
+  const next = prev.then(() => runTurn(botId, trigger)).then(() => {}, () => {});
   queues.set(botId, next);
   next.finally(() => { if (queues.get(botId) === next) queues.delete(botId); });
+}
+
+/**
+ * Like enqueue, but resolves with what the bot wrote during the turn (every message it posted,
+ * joined by blank lines) and rejects when the turn failed or was stopped.
+ */
+export function enqueueAndWait(botId: string, trigger: Trigger): Promise<string> {
+  const prev = queues.get(botId) ?? Promise.resolve();
+  const result = prev.then(() => runTurn(botId, trigger));
+  const next = result.then(() => {}, () => {});
+  queues.set(botId, next);
+  next.finally(() => { if (queues.get(botId) === next) queues.delete(botId); });
+  return result;
 }
 
 export function interrupt(botId: string) {
@@ -57,17 +80,97 @@ export function runInBotQueue<T>(botId: string, job: () => Promise<T>): Promise<
 
 export const isBotBusy = (botId: string) => queues.has(botId);
 
-export function enqueueBotMessage(fromBotId: string, toBotId: string, text: string, depth: number) {
+// ---------- ask_bot: one bot asks another and gets the answer back ----------
+
+/** Longest ask_bot waits for the answer in the tool call. Kept under the engines' 30 minute tool timeout. Tests shorten it. */
+export const askSettings = { waitMs: 15 * 60_000 };
+
+/** Which bot each waiting asker is waiting on; a chain that leads back to the asker would deadlock the queues. */
+const waitingOn = new Map<string, string>();
+
+function wouldDeadlock(fromBotId: string, toBotId: string): boolean {
+  const seen = new Set<string>();
+  for (let cur: string | undefined = toBotId; cur && !seen.has(cur); cur = waitingOn.get(cur)) {
+    if (cur === fromBotId) return true;
+    seen.add(cur);
+  }
+  return false;
+}
+
+function createAskTask(targetId: string, userId: string, request: string): string {
+  const id = newId('task');
+  db.prepare("INSERT INTO tasks(id,bot_id,title,state,created_at,updated_at) VALUES (?,?,?,'working',?,?)").run(id, targetId, request.replace(/\s+/g, ' ').trim().slice(0, 120) || 'Request from another bot', now(), now());
+  hub.emit(userId, { type: 'tasks', botId: targetId });
+  return id;
+}
+
+export interface AskOutcome { output: string; summary: string }
+
+/**
+ * Post `request` into the target's conversation as a message from the asker and run its turn at
+ * hop `depth` (the asker's depth + 1).
+ * `wait`: block until the turn ends and hand back what the target wrote. Otherwise (or once the wait
+ * runs out) the target's reply is delivered into the asker's conversation by deliverAsk when the
+ * turn ends, tracked as a task on the target meanwhile.
+ */
+export async function askBot(fromBotId: string, toBotId: string, request: string, wait: boolean, depth: number): Promise<AskOutcome> {
   const from = getBotRow(fromBotId);
-  appendRow(toBotId, 'message', { type: 'message', role: 'user', text, from: { kind: 'bot', id: fromBotId, name: from.name } });
-  enqueue(toBotId, { type: 'bot', fromBotId, fromName: from.name, text, depth });
+  const to = getBotRow(toBotId);
+  const trigger: Trigger & { type: 'ask' } = { type: 'ask', askId: newId('ask'), fromBotId, fromName: from.name, text: request, depth, wait };
+  appendRow(toBotId, 'message', { type: 'message', role: 'user', text: request, from: { kind: 'bot', id: fromBotId, name: from.name } });
+
+  const later = (why: string) => {
+    trigger.wait = false;
+    trigger.taskId = createAskTask(toBotId, to.user_id, request);
+    return {
+      output: JSON.stringify({ task_id: trigger.taskId, status: 'working', message: `${why} ${to.name} will post the result into this chat as a message when it is done; do not poll or ask again. Carry on with other work or end your turn.` }),
+      summary: `Asked ${to.name} (task)`,
+    };
+  };
+
+  if (!wait || wouldDeadlock(fromBotId, toBotId)) {
+    const r = later(wait ? `${to.name} is waiting on you right now, so this request was queued instead.` : `Asked ${to.name}.`);
+    enqueue(toBotId, trigger);
+    return r;
+  }
+
+  const turn = enqueueAndWait(toBotId, trigger);
+  let settled: { text: string } | { error: string } | null = null;
+  const done = turn.then((text) => (settled = { text }), (e) => (settled = { error: String(e?.message ?? e) }));
+  let timer: NodeJS.Timeout | undefined;
+  waitingOn.set(fromBotId, toBotId);
+  try {
+    await Promise.race([done, new Promise<void>((r) => { timer = setTimeout(r, askSettings.waitMs); })]);
+  } finally {
+    clearTimeout(timer);
+    waitingOn.delete(fromBotId);
+  }
+  if (!settled) return later(`${to.name} has not finished after ${Math.max(1, Math.round(askSettings.waitMs / 60_000))} minutes.`);
+  const result = settled as { text: string } | { error: string };
+  if ('error' in result) return { output: `${to.name} could not answer: ${result.error}`, summary: `${to.name} did not answer` };
+  return { output: result.text.trim() || `${to.name} finished without writing a reply.`, summary: `${to.name} answered` };
+}
+
+/** An 'ask' turn nobody is waiting on any more has ended: hand its reply to the asker. */
+function deliverAsk(targetId: string, trigger: Trigger & { type: 'ask' }, text: string, failure: string | null) {
+  const target = getBotRow(targetId);
+  const caller = getBotRow(trigger.fromBotId);
+  if (!target || !caller) return;
+  const reply = text.trim() || (failure ? `${target.name} could not finish this: ${failure}` : `${target.name} finished without writing a reply.`);
+  appendRow(caller.id, 'message', { type: 'message', role: 'assistant', text: reply, from: { kind: 'bot', id: target.id, name: target.name } });
+  if (trigger.taskId) db.prepare("UPDATE tasks SET state='done', note=?, updated_at=? WHERE id=?").run(reply.slice(0, 2000), now(), trigger.taskId);
+  db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(caller.id);
+  hub.emit(caller.user_id, { type: 'tasks', botId: target.id });
+  emitBot(caller.id);
+  enqueue(caller.id, { type: 'bot', fromBotId: target.id, fromName: target.name, text: reply, depth: trigger.depth });
 }
 
 function triggerText(t: Trigger): string {
   switch (t.type) {
     case 'user': return t.text;
     case 'routine': return `[Routine "${t.name}" is running now. Do this:]\n${t.prompt}`;
-    case 'bot': return `[Message from ${t.fromName}, another Bot on the team. Reply to them with send_to_bot if they asked you something.]\n${t.text}`;
+    case 'bot': return `[Message from ${t.fromName}, another Bot on the team. If it answers something you asked, carry on with your work. If they need something from you, use ask_bot.]\n${t.text}`;
+    case 'ask': return `[${t.fromName}, another Bot on the team, is asking you this. Whatever you write as your final reply in this turn is delivered to ${t.fromName} automatically when you finish. Do not call ask_bot to answer them (use it only to ask someone a genuinely new question), and do not call stay_silent: do the work, then write the answer.]\n${t.text}`;
     case 'system': return `[System notice] ${t.text}`;
   }
 }
@@ -80,7 +183,7 @@ interface Outcome { status?: ToolCallBody['status']; summary?: string }
 interface Turn {
   botId: string;
   userId: string;
-  /** How many bot-to-bot hops led here (send_to_bot stops a ping-pong at 3). */
+  /** How many bot-to-bot hops led here (ask_bot stops a ping-pong at 3). */
   depth: number;
   /** A tool ended the conversation for now (asked the user, stayed silent): drop any closing text. */
   silent: boolean;
@@ -299,16 +402,19 @@ function captionFrom(reasoning: string): string | null {
 /** Hermes' own tool lookup (it loads rarely used tools on demand). */
 const TOOLBOX = new Set(['tool_search', 'tool_describe']);
 
-async function runTurn(botId: string, trigger: Trigger) {
+/** Runs one turn; resolves with everything the bot wrote, rejects when the turn failed or was stopped. */
+async function runTurn(botId: string, trigger: Trigger): Promise<string> {
   const bot = getBotRow(botId);
-  if (!bot || bot.kind === 'room') return;
+  if (!bot || bot.kind === 'room') return '';
   const userId: string = bot.user_id;
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);
-  const turn: Turn = { botId, userId, depth: trigger.type === 'bot' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map() };
+  const turn: Turn = { botId, userId, depth: trigger.type === 'bot' || trigger.type === 'ask' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map() };
   turns.set(botId, turn);
   setLive(botId, { isRunning: true, activity: { kind: 'thinking', since: now() }, awaiting: null, startedAt: now(), caption: null, steps: 0 });
 
+  // Everything the bot said this turn, for whoever asked (ask_bot).
+  const spoken: string[] = [];
   // The assistant message being written right now.
   let msgSeq: number | null = null;
   let text = '';
@@ -324,6 +430,7 @@ async function runTurn(botId: string, trigger: Trigger) {
     if (msgSeq === null) return;
     if (text.trim()) {
       flush(false);
+      spoken.push(text.trim());
       db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
     } else updateRow(botId, msgSeq, { type: 'message', role: 'assistant', text: '', streaming: false });
     msgSeq = null;
@@ -333,6 +440,7 @@ async function runTurn(botId: string, trigger: Trigger) {
     if (turn.silent || !t.trim()) return;
     closeMessage();
     appendRow(botId, 'message', { type: 'message', role: 'assistant', text: t.trim(), streaming: false });
+    spoken.push(t.trim());
     db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(botId);
     wroteText = true;
   };
@@ -347,12 +455,12 @@ async function runTurn(botId: string, trigger: Trigger) {
   };
   const outputsSeen = new Set<string>();
   let steps = 0;
-  let failed = false;
+  let failure: string | null = null;
 
   try {
     // The screen first: the engine's browser and computer tools point at it.
-    await screenForWork(userId, botId).catch((e) => console.warn(`[computer] screen not ready for ${botId}: ${e?.message ?? e}`));
-    const engine = await engineFor(botId);
+    await loopDeps.screenForWork(userId, botId).catch((e) => console.warn(`[computer] screen not ready for ${botId}: ${e?.message ?? e}`));
+    const engine = await loopDeps.engineFor(botId);
     if (ctrl.signal.aborted) throw new Error('interrupted');
 
     let input = triggerText(trigger);
@@ -423,14 +531,14 @@ async function runTurn(botId: string, trigger: Trigger) {
               caption('Finding the right tool', true);
               break;
             }
-            const act = activityFor(String(item.name ?? ''));
             let args: any;
             try { args = typeof item.arguments === 'string' ? JSON.parse(item.arguments) : item.arguments; } catch { args = undefined; }
+            const act = activityFor(String(item.name ?? ''), args);
             const row = appendRow(botId, 'tool-call', { type: 'tool-call', callId: String(item.call_id ?? item.id ?? ''), name, label: act.label, status: 'running', args } satisfies ToolCallBody);
             turn.tools.push({ seq: row.seq, callId: String(item.call_id ?? item.id ?? ''), name, claimed: false, done: false });
             steps++;
-            const kind: ActivityKind = name === 'send_to_bot' ? 'messaging_named' : act.kind;
-            const detail = name === 'send_to_bot' ? String(args?.bot_name ?? '') || undefined : act.detail;
+            const kind: ActivityKind = act.kind;
+            const detail = act.detail;
             // A call that is waiting for the user keeps its "waiting for you" state.
             if (!getLive(botId).awaiting) setLive(botId, { isRunning: true, activity: { kind, detail, since: now() }, steps, caption: null });
             else setLive(botId, { steps });
@@ -479,10 +587,10 @@ async function runTurn(botId: string, trigger: Trigger) {
       }
     }
   } catch (e: any) {
-    failed = true;
     const stopped = ctrl.signal.aborted;
+    failure = stopped ? 'Stopped' : String(e?.message ?? e);
     closeMessage();
-    appendRow(botId, 'notice', { type: 'notice', text: stopped ? 'Stopped.' : `Something went wrong: ${e?.message ?? e}`, tone: stopped ? 'info' : 'error' });
+    appendRow(botId, 'notice', { type: 'notice', text: stopped ? 'Stopped.' : `Something went wrong: ${failure}`, tone: stopped ? 'info' : 'error' });
     if (!stopped) console.error('[agent]', botId, e);
   } finally {
     closeMessage();
@@ -490,7 +598,7 @@ async function runTurn(botId: string, trigger: Trigger) {
       if (ref.done) continue;
       const row = getRow(botId, ref.seq);
       if (row?.body.type !== 'tool-call' || (row.body.status !== 'running' && row.body.status !== 'awaiting-approval')) continue;
-      patchToolRow(botId, ref.seq, failed ? { status: 'error', summary: ctrl.signal.aborted ? 'Stopped' : 'Did not finish' } : { status: 'done' });
+      patchToolRow(botId, ref.seq, failure ? { status: 'error', summary: ctrl.signal.aborted ? 'Stopped' : 'Did not finish' } : { status: 'done' });
     }
     if (aborts.get(botId) === ctrl) aborts.delete(botId);
     if (turns.get(botId) === turn) turns.delete(botId);
@@ -498,5 +606,11 @@ async function runTurn(botId: string, trigger: Trigger) {
     if (!pendingApprovals(botId).length) setLive(botId, { isRunning: false, activity: null, awaiting: null, startedAt: null, caption: null });
     else setLive(botId, { isRunning: false, caption: null });
     emitBot(botId);
+    // The asker stopped waiting (or never did): the reply goes into its conversation instead.
+    if (trigger.type === 'ask' && !trigger.wait) {
+      try { deliverAsk(botId, trigger, spoken.join('\n\n'), failure); } catch (e) { console.error('[agent] could not deliver reply to', trigger.fromBotId, e); }
+    }
   }
+  if (failure) throw new Error(failure);
+  return spoken.join('\n\n');
 }

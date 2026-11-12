@@ -6,7 +6,7 @@ import { getLive } from '../store.js';
  * Subagents (Grok Bot: CheckSubagent / MessageSubagent / StopSubagent, `sand-subagent-*`).
  * A subagent is a hidden child bot: same owner and look as its parent, its own context and
  * its own computer screen, hidden from the sidebar. It receives its goal as a bot-to-bot
- * message and reports back to the parent with send_to_bot when done.
+ * message and reports back to the parent with ask_bot (wait=false) when done.
  */
 
 export function initSubagents() {
@@ -24,7 +24,7 @@ export function createSubagent(parentId: string, goal: string, label?: string) {
   const name = `${p.name} · ${(label || goal).replace(/\s+/g, ' ').slice(0, 32)}`;
   const instructions =
     `You are a subagent of ${p.name}, working on one delegated goal:\n${goal}\n\n` +
-    `Work independently with your own tools and computer. When you finish (or get blocked), call send_to_bot with bot_name "${p.name}" and a concise result, then stop. Do not message the user directly.` +
+    `Work independently with your own tools and computer. When you finish (or get blocked), report back with ask_bot(bot_name: "${p.name}", request: <your concise result>, wait: false), then stop. Do not message the user directly.` +
     (p.instructions ? `\n\nYour parent's standing instructions:\n${p.instructions}` : '');
   db.prepare(
     `INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,is_primary,effort,parent_bot_id,hidden,created_at,updated_at)

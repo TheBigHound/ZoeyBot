@@ -8,7 +8,7 @@ import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
 import type { EngineInfo, EngineProvider } from './types.js';
-import { ollamaChatModels, sshWrapper, vmEngineSettings } from './engine-runtime.js';
+import { DEFAULT_TOOLSETS, KNOWN_TOOLSETS, hostEngineSettings, ollamaChatModels, sshWrapper, validToolsets, vmEngineSettings } from './engine-runtime.js';
 
 /**
  * Every bot is run by a Hermes agent.
@@ -143,6 +143,91 @@ function extraMcpServers(): Record<string, any> {
   }
 }
 
+// ---------- per-bot execution settings (host mode) ----------
+
+/** The bot's stored toolset allowlist (JSON array in bots.toolsets), validated; defaults when unset or empty. */
+function botToolsets(b: any): string[] {
+  if (typeof b?.toolsets !== 'string' || !b.toolsets) return [...DEFAULT_TOOLSETS];
+  try { return validToolsets(JSON.parse(b.toolsets)); } catch { return [...DEFAULT_TOOLSETS]; }
+}
+
+/** Where the bot's terminal and file tools work. */
+function botCwd(b: any, home: string): string {
+  if (env.vmBox) return `/home/${env.vmUser}`;
+  if (env.localBox) return `/root/grokbot/files/${b.id}`;
+  if (typeof b?.cwd === 'string' && b.cwd && path.isAbsolute(b.cwd)) return b.cwd;
+  return path.join(home, 'workspace');
+}
+
+/** Where this bot's tools execute. */
+function executionMode(): 'host' | 'vm' | 'orgo' {
+  return env.hostMode ? 'host' : env.vmBox ? 'vm' : 'orgo';
+}
+
+/** What the agent actually runs with: for the primary bot its own config.yaml decides, for a managed bot the bot row does. */
+function effectiveSettings(b: any): { home: string; cwd: string; toolsets: string[] } {
+  if (b.engine === 'primary') {
+    const home = env.hermesHome;
+    const cfg = readYaml(path.join(home, 'config.yaml'));
+    const fromCfg = cfg.terminal?.cwd;
+    const tools = cfg.platform_toolsets?.api_server;
+    return {
+      home,
+      cwd: typeof fromCfg === 'string' && fromCfg ? fromCfg : botCwd(b, home),
+      toolsets: Array.isArray(tools) && tools.length ? tools.filter((t: unknown): t is string => typeof t === 'string') : botToolsets(b),
+    };
+  }
+  const home = homeFor(b.id);
+  const toolsets = env.hostMode ? botToolsets(b) : env.vmBox ? ['terminal', 'file', 'todo'] : ['hermes-api-server'];
+  return { home, cwd: botCwd(b, home), toolsets };
+}
+
+class SettingsError extends Error { status = 400; }
+
+/**
+ * Change a bot's working directory and/or tool allowlist. A managed bot's home is rewritten and its
+ * gateway restarted; the primary bot's home is managed outside this app, so its values are only stored.
+ * `null` (or an empty list) clears a value back to the default.
+ */
+export async function updateEngineSettings(botId: string, patch: { cwd?: string | null; toolsets?: string[] | null }): Promise<{ note: string | null }> {
+  const b = botRow(botId);
+  if (!b) throw new Error('bot not found');
+  const sets: string[] = [];
+  const args: any[] = [];
+  if (patch.cwd !== undefined) {
+    let cwd: string | null = null;
+    if (patch.cwd !== null && String(patch.cwd).trim()) {
+      cwd = String(patch.cwd).trim();
+      if (!path.isAbsolute(cwd)) throw new SettingsError('The working directory must be an absolute path.');
+      let st: fs.Stats;
+      try { st = fs.statSync(cwd); } catch { throw new SettingsError(`No such directory: ${cwd}`); }
+      if (!st.isDirectory()) throw new SettingsError(`Not a directory: ${cwd}`);
+      cwd = path.resolve(cwd);
+    }
+    sets.push('cwd=?'); args.push(cwd);
+  }
+  if (patch.toolsets !== undefined) {
+    let stored: string | null = null;
+    if (patch.toolsets !== null) {
+      if (!Array.isArray(patch.toolsets) || patch.toolsets.some((t) => typeof t !== 'string')) throw new SettingsError('toolsets must be a list of names.');
+      const names = patch.toolsets.map((t) => t.trim()).filter(Boolean);
+      const unknown = names.filter((t) => !(KNOWN_TOOLSETS as readonly string[]).includes(t));
+      if (unknown.length) throw new SettingsError(`Unknown toolset(s): ${unknown.join(', ')}. Known: ${KNOWN_TOOLSETS.join(', ')}.`);
+      if (names.length) stored = JSON.stringify(validToolsets(names));
+    }
+    sets.push('toolsets=?'); args.push(stored);
+  }
+  if (!sets.length) return { note: null };
+  db.prepare(`UPDATE bots SET ${sets.join(', ')}, updated_at=? WHERE id=?`).run(...args, Date.now(), botId);
+  if (b.engine !== 'managed') {
+    return { note: `${b.name} runs on the computer's own agent; its working directory and tools are set in that agent's config, not here. Saved for reference only.` };
+  }
+  await starting.get(botId)?.catch(() => {});
+  await writeHome(botId);
+  await restartEngine(botId);
+  return { note: null };
+}
+
 /** Create or refresh the home. config.yaml is created once; after that only the keys we own are patched. */
 export async function writeHome(botId: string): Promise<{ home: string; key: string; display: string | null }> {
   const b = botRow(botId);
@@ -151,10 +236,10 @@ export async function writeHome(botId: string): Promise<{ home: string; key: str
   fs.mkdirSync(path.join(home, 'locks'), { recursive: true });
   fs.chmodSync(home, 0o700);
 
-  // Its screen decides which display and which Chrome it drives. Only meaningful on the computer itself.
+  // Its screen decides which display and which Chrome it drives. Only meaningful on the computer itself; host mode has no screens.
   let display: string | null = null;
   let cdp = '';
-  if (env.localBox) {
+  if (env.localBox && !env.hostMode) {
     try {
       const s = await screenFor(b.user_id, botId);
       display = displayFor(s.screenId);
@@ -164,8 +249,8 @@ export async function writeHome(botId: string): Promise<{ home: string; key: str
     }
   }
 
-  const cwd = env.localBox ? `/root/grokbot/files/${botId}` : path.join(home, 'workspace');
-  fs.mkdirSync(cwd, { recursive: true });
+  const cwd = botCwd(b, home);
+  try { fs.mkdirSync(cwd, { recursive: true }); } catch (e: any) { console.warn(`[engine] could not create ${cwd}: ${e?.message ?? e}`); }
 
   const cfgFile = path.join(home, 'config.yaml');
   const fresh = !fs.existsSync(cfgFile);
@@ -184,7 +269,11 @@ export async function writeHome(botId: string): Promise<{ home: string; key: str
     hq: { url: `${env.mcpBaseUrl}/mcp/${botId}`, headers: { Authorization: 'Bearer ${HQ_MCP_TOKEN}' }, timeout: 1800, connect_timeout: 30 },
   };
   cfg.platforms = { ...(cfg.platforms ?? {}), api_server: { enabled: true, extra: { host: '127.0.0.1', port: b.engine_port } } };
-  if (env.vmBox) {
+  if (env.hostMode) {
+    // Tools run on this host in the bot's own directory with the bot's own allowlist. No ssh wrappers.
+    cfg = hostEngineSettings(cfg, { cwd, toolsets: botToolsets(b) });
+    for (const tool of ['ssh', 'scp']) fs.rmSync(path.join(home, 'bin', tool), { force: true });
+  } else if (env.vmBox) {
     cfg = vmEngineSettings(cfg, { host: env.vmHost, port: env.vmPort, user: env.vmUser, key: env.vmKey });
     for (const tool of ['ssh', 'scp'] as const) {
       const file = path.join(home, 'bin', tool);
@@ -219,7 +308,7 @@ export async function writeHome(botId: string): Promise<{ home: string; key: str
   const primaryEnv = readDotenv(path.join(env.hermesHome, '.env'));
   const vars: Record<string, string> = { ...mine };
   for (const k of SHARED_ENV) {
-    if (env.vmBox) continue; // Local engines never silently inherit host/cloud credentials.
+    if (env.vmBox) continue; // VM engines never silently inherit host/cloud credentials. Host-mode bots share the primary agent's keys.
     const v = primaryEnv[k] ?? process.env[k];
     if (v && !vars[k]) vars[k] = v;
   }
@@ -301,7 +390,8 @@ function managedKey(botId: string): string {
   return k;
 }
 
-function vmHomeSafe(home: string): boolean {
+/** A home may be used as it is. Only the VM mode has a policy to enforce (ssh backend, guest-only tools, pinned wrappers). */
+function homeSafe(home: string): boolean {
   if (!env.vmBox) return true;
   const c = readYaml(path.join(home, 'config.yaml'));
   const t = c.terminal;
@@ -319,7 +409,7 @@ async function startGateway(botId: string): Promise<void> {
   const url = managedUrl(botId);
 
   // A gateway from an earlier run of this server is still good: use it as it is.
-  if (vmHomeSafe(homeFor(botId)) && (await healthy(url)) && managedKey(botId) && (await keyAccepted(url, managedKey(botId)))) return;
+  if (homeSafe(homeFor(botId)) && (await healthy(url)) && managedKey(botId) && (await keyAccepted(url, managedKey(botId)))) return;
   if (await healthy(url)) {
     if (gatewayPid(homeFor(botId))) await stopGateway(botId);
     else throw new Error(`Port ${botRow(botId).engine_port} is taken by something else.`);
@@ -393,11 +483,11 @@ export async function engineFor(botId: string): Promise<Engine> {
     kind = assignEngine(botId);
   }
   if (kind === 'primary') {
-    if (!vmHomeSafe(env.hermesHome)) throw new Error('VM engine requires isolated SSH configuration and guest-only toolsets; refusing host execution.');
+    if (!homeSafe(env.hermesHome)) throw new Error('VM engine requires isolated SSH configuration and guest-only toolsets; refusing host execution.');
     return { kind, url: env.hermesUrl, key: primaryKey(), home: env.hermesHome };
   }
   const url = managedUrl(botId);
-  if (!vmHomeSafe(homeFor(botId)) || !(await healthy(url, 1500)) || !managedKey(botId)) await ensureManaged(botId);
+  if (!homeSafe(homeFor(botId)) || !(await healthy(url, 1500)) || !managedKey(botId)) await ensureManaged(botId);
   return { kind, url, key: managedKey(botId), home: homeFor(botId) };
 }
 
@@ -521,7 +611,12 @@ export async function engineInfo(botId: string): Promise<EngineInfo> {
   const b = botRow(botId);
   if (!b) throw new Error('bot not found');
   const kind = engineKind(botId);
-  const base: EngineInfo = { botId, profile: kind === 'primary' ? 'default' : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null, version: null, providers: [], ownScreen: kind ? ownScreenOn(botId) : false };
+  const eff = kind ? effectiveSettings(b) : { home: '', cwd: '', toolsets: [] as string[] };
+  const base: EngineInfo = {
+    botId, profile: kind === 'primary' ? 'default' : botId, status: 'stopped', error: null, model: b.model ?? null, provider: b.provider ?? null,
+    version: null, providers: [], ownScreen: kind ? ownScreenOn(botId) : false,
+    home: eff.home, cwd: eff.cwd, toolsets: eff.toolsets, execution: executionMode(),
+  };
   if (!kind) return { ...base, status: 'error', error: 'This bot has no agent.' };
 
   let e: { url: string; key: string };

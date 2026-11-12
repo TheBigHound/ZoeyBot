@@ -16,7 +16,7 @@ browser ── HTTP + SSE ──► server ── POST /v1/responses ──► H
 | API + realtime | `server/src/routes*.ts`, `lib/hub.ts` | JSON over HTTP, plus one Server-Sent Events stream per user (`GET /api/events`) carrying row updates, live state, roster changes and computer state |
 | Turns | `server/src/agent/loop.ts` | Per-Bot serial queue. A turn posts the message to the Bot's Hermes gateway (`/v1/responses`, streaming) and turns the event stream into rows (messages, tool calls) and live state (what the Bot is doing now). Before each turn it makes sure the Bot's screen is ready |
 | Engines | `server/src/engine.ts` | Which Hermes runs which Bot. The **primary** engine is the gateway that already runs on the computer; the app only calls its API. A **managed** engine is a Hermes home under `ENGINES_DIR/<botId>` with its own `hermes gateway run`, its own port (from 8650), credentials, model and browser helper (`BH_HOME`). Also: model and provider settings, and opening Hermes' subscription sign-in in a terminal on the Bot's screen |
-| App tools | `server/src/mcp.ts`, `agent/tools.ts` | An MCP endpoint per Bot (`POST /mcp/<botId>`, `POST /mcp/primary`; bearer token derived from `SESSION_SECRET`). Tools: `x_search`, `save_file`, routines, tasks, check-ins, `send_to_bot`, group chats, `ask_user`, `request_app_connection`, plus the user's Composio tools |
+| App tools | `server/src/mcp.ts`, `agent/tools.ts` | An MCP endpoint per Bot (`POST /mcp/<botId>`, `POST /mcp/primary`; bearer token derived from `SESSION_SECRET`). Tools: `x_search`, `save_file`, routines, tasks, check-ins, `ask_bot`, group chats, `ask_user`, `request_app_connection`, plus the user's Composio tools |
 | Memory | `server/src/engine-memory.ts` | Memory lives in each Bot's Hermes home (`memories/MEMORY.md`, `USER.md`). The app shows the entries and lets the user remove one |
 | Screens | `server/src/computer.ts`, `desk.ts`, `box.ts`, `server/box/*` | One Orgo Linux computer; the primary Bot uses the default screen, every other Bot leases an Orgo screen (four per computer). `desk.ts` installs the scripts in `server/box/` under `/opt/hq` and calls them to dress a screen: wallpaper, dock, light theme, a Chrome with its own profile and DevTools port (9200 + display number), and a home screen as the new tab page. `box.ts` runs commands locally (`HQ_LOCAL=1`) or through Orgo's API |
 | Viewer | `server/src/vnc.ts` | WebSocket relay between the browser (noVNC) and the screen's VNC server. The server does the VNC auth, so the computer's password never reaches the browser. In *watch* mode, keyboard, pointer and clipboard messages are dropped on the server |
@@ -62,8 +62,13 @@ Not covered: what a Bot does through its browser or shell, and Hermes' own promp
 
 ## Bots working together
 
-- **`send_to_bot`** delivers a message to another Bot's queue; the reply comes back the same way.
-- **Group chats** are a Bot row with `kind='room'` and a member list. A user message goes to the @mentioned members, or to all of them (up to 3).
+- **`ask_bot(bot_name, request, wait)`** is the one bot-to-bot tool. The request is posted into the target's conversation as a message from the asker and runs as a turn of its own (`Trigger` type `ask`), so the exchange shows in both chats.
+  - `wait=true` (default; questions, quick jobs): the tool call blocks until the target's turn ends and returns what it wrote as the tool result. After 15 minutes the call returns anyway and the ask falls back to the `wait=false` path.
+  - `wait=false` (long work): a task is created on the target (title = the request) and the call returns at once with the task id. When the target's turn ends, the server posts its reply into the asker's chat as a message from the target, marks the task done with the reply as note, and gives the asker a new turn (`Trigger` type `bot`). The model never has to remember to report back.
+  - The target is told who asked and that its final reply is delivered by itself; it must not answer with `ask_bot` or call `stay_silent`.
+  - Guards: no asking yourself or a group chat, at most 3 hops (each ask runs the target one hop deeper), and an ask that would wait on a bot that is itself waiting on you is queued as `wait=false` instead of deadlocking the two serial queues.
+- **Group chats** are a Bot row with `kind='room'` and a member list. A user message goes to the @mentioned members, or to all of them (up to 3), who answer with `post_to_group`.
+- **Subagents** are hidden child Bots that report back to their parent with `ask_bot(parent, result, wait=false)`.
 - For work inside one task, Hermes' own delegation is used.
 
 ## Data

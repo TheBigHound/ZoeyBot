@@ -6,7 +6,7 @@ import { VM_AGENT_TOOLS, vmAgentTools, type VmCallResult } from './vm-agent-tool
 import { getBotRow } from './store.js';
 import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
-import { claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
+import { askBot, claimToolRow, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
 
 /**
@@ -60,7 +60,7 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
   const vmTool = env.vmBox ? VM_AGENT_TOOLS.find(t => t.name.toLowerCase() === rawName.toLowerCase()) : undefined;
   const name = vmTool?.name ?? [...toolMap.keys()].find((k) => k.toLowerCase() === rawName.toLowerCase()) ?? rawName;
   const rowSeq = await claimToolRow(botId, name);
-  const ctx: ToolCtx = { userId, botId, enqueueBotMessage, depth: turnDepth(botId) };
+  const ctx: ToolCtx = { userId, botId, depth: turnDepth(botId), askBot: (to, request, wait, depth) => askBot(botId, to, request, wait, depth) };
   try {
     if (vmTool) {
       const result = await vmAgentTools.call(name, args, { userId, botId });

@@ -217,6 +217,7 @@ export function cdpUrlFor(botId: string, screenId: string): string {
  * answers. Without this a bot's first turn finds no browser and goes off to start one of its own.
  */
 export async function screenForWork(userId: string, botId: string): Promise<void> {
+  if (env.hostMode) return; // No screens at all: tools run on this host.
   if (!env.orgoComputerId) return;
   if (!managesChrome(botId)) {
     // It brings its own browser, so nothing it needs depends on the dressing: don't make it wait.

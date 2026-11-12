@@ -1,14 +1,11 @@
 #!/usr/bin/python3
-"""Bot HQ's explicit, per-login launchd lifecycle. No login auto-start."""
+"""Bot HQ's explicit, per-login launchd lifecycle (host mode: every agent runs on this Mac). No login auto-start."""
 from pathlib import Path
 import shlex
 import json
 import os
 import plistlib
 import tempfile
-import base64
-import hashlib
-import socket
 import subprocess
 import time
 import urllib.request
@@ -25,12 +22,14 @@ class ServiceError(RuntimeError):
 
 
 PREFIX = 'com.thehound.bothq.'
-VM_UUID = 'A1CE5F16-4C0F-42F6-BD61-742708F09212'
-TUNNEL_PORTS = (6099, 6100, 6101, 6102, 9299, 9300, 9301, 9302)
+# Host mode: every Hermes gateway runs on this Mac. Start order matters: the web endpoint serves MCP to the engine.
+SERVICES = ('ollama', 'web', 'engine')
+# Keys an older (VM-era) config.json may still carry; they are ignored so `install` can be re-run over it.
+LEGACY_CONFIG_KEYS = ('utmctl', 'vm_uuid', 'key', 'known_hosts')
 
 
 def service_ports(name):
-    return TUNNEL_PORTS if name == 'tunnels' else {'engine': (8642,), 'web': (8787,), 'ollama': (11434,)}[name]
+    return {'engine': (8642,), 'web': (8787,), 'ollama': (11434,)}[name]
 
 
 def recognized_owner(name, owner, config):
@@ -47,13 +46,6 @@ def recognized_owner(name, owner, config):
     if name == 'web':
         return ((cwd == str(root) and 'server/src/index.ts' in args) or
                 (cwd == str(root / 'server') and 'dist/index.js' in args)) and any('env-file=' in arg for arg in args)
-    if name == 'tunnels':
-        return (args and args[0] == '/usr/bin/ssh' and '-NT' in args and
-                '-p' in args and args[args.index('-p') + 1:args.index('-p') + 2] == ['2222'] and
-                '-i' in args and args[args.index('-i') + 1:args.index('-i') + 2] == [config['key']] and
-                'UserKnownHostsFile=' + config['known_hosts'] in args and
-                'StrictHostKeyChecking=yes' in args and 'bot@127.0.0.1' in args and
-                all('127.0.0.1:%d:127.0.0.1:%d' % (p, p) in args for p in TUNNEL_PORTS))
     if name == 'ollama':
         return bool(args) and (args[0] == 'ollama' or Path(args[0]).resolve() == Path(config['ollama']).resolve()) and 'serve' in args
     return False
@@ -68,7 +60,7 @@ def service_action(name, owners, loaded, healthy, config):
     occupied = [port for port in ports if owners.get(port)]
     if not occupied:
         return 'wait' if loaded else 'start'
-    if len(occupied) != len(ports) or (name == 'tunnels' and len({o['pid'] for p in ports for o in owners.get(p, [])}) != 1):
+    if len(occupied) != len(ports):
         if loaded:
             return 'wait'
         raise ServiceError('incomplete external ' + name + '; stop it explicitly before migration')
@@ -83,10 +75,7 @@ def make_config(root, home, node, ollama, ffmpeg, stt_hermes):
     root, home = Path(root).resolve(), Path(home).resolve()
     return dict(root=str(root), home=str(home), node=str(node), ollama=str(ollama),
                 ffmpeg=str(ffmpeg), stt_hermes=str(stt_hermes),
-                state=str(root / 'data/launchd'), logs=str(root / 'data/logs'),
-                utmctl=str(home / 'Applications/UTM.app/Contents/MacOS/utmctl'),
-                vm_uuid=VM_UUID, key=str(home / '.ssh/bot-hq-utm'),
-                known_hosts=str(home / 'VirtualMachines/BotHQ/ssh_known_hosts'))
+                state=str(root / 'data/launchd'), logs=str(root / 'data/logs'))
 
 
 def make_jobs(config):
@@ -101,9 +90,7 @@ def make_jobs(config):
         'engine': ['HERMES_HOME=' + str(private), 'HERMES_GATEWAY_LOCK_DIR=' + str(private / 'locks'),
                    'BH_HOME=' + str(private / 'browser-harness'), str(private / 'runtime-hermes'),
                    'gateway', 'run', '--no-supervise'],
-        'tunnels': ['HQ_VM_KEY=' + c['key'], 'HQ_VM_KNOWN_HOSTS=' + c['known_hosts'],
-                    '/bin/bash', str(root / 'scripts/local-utm-tunnels.sh')],
-        'web': ['HQ_VM=1', 'HQ_VM_KEY=' + c['key'], 'HQ_VM_KNOWN_HOSTS=' + c['known_hosts'],
+        'web': ['HQ_HOST=1',
                 'HERMES_HOME_PRIMARY=' + str(private), 'HERMES_BIN=' + str(private / 'runtime-hermes'),
                 'HERMES_URL=http://127.0.0.1:8642', 'PORT=8787', 'APP_URL=http://127.0.0.1:8787',
                 'SERVER_URL=http://127.0.0.1:8787', 'LOCAL_TTS_BIN=' + c['ollama'],
@@ -170,18 +157,18 @@ def load_config(root):
     if path.is_symlink() or path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077:
         raise ServiceError('launcher config must be owned by this user and private (0600)')
     config = json.loads(path.read_text())
-    if config['root'] != str(Path(root).resolve()) or config['vm_uuid'] != VM_UUID:
-        raise ServiceError('config root or existing VM UUID does not match this installation')
+    for key in LEGACY_CONFIG_KEYS:
+        config.pop(key, None)
+    if config.get('root') != str(Path(root).resolve()):
+        raise ServiceError('config root does not match this installation')
     return config
 
 
 def start_services(backend, open_browser=False):
     backend.preflight()
     # The gateway discovers HQ's MCP tools during boot; the web endpoint must already answer.
-    names = ('ollama', 'tunnels', 'web', 'engine')
+    names = SERVICES
     plans = {name: backend.inspect(name) for name in names}
-    backend.ensure_vm()
-    backend.ensure_ssh()
     started = []
     try:
         for name in names:
@@ -201,17 +188,15 @@ def start_services(backend, open_browser=False):
         raise
 
 
-def stop_services(backend, shutdown_vm=False):
+def stop_services(backend):
     errors = []
-    for name in ('web', 'engine', 'tunnels', 'ollama'):
+    for name in reversed(SERVICES):
         try:
             backend.bootout(name)
         except Exception as error:
             errors.append('%s: %s' % (name, error))
     if errors:
         raise ServiceError('; '.join(errors))
-    if shutdown_vm:
-        backend.request_vm_shutdown()
 
 
 def run_command(args, timeout=30, check=True):
@@ -232,38 +217,6 @@ def get_text(url):
 
 def get_json(url):
     return json.loads(get_text(url))
-
-
-def vnc_ready(port=6099):
-    key = base64.b64encode(os.urandom(16)).decode()
-    expected = base64.b64encode(hashlib.sha1((key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
-    try:
-        with socket.create_connection(('127.0.0.1', port), timeout=4) as connection:
-            connection.sendall(('GET / HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n' % (port, key)).encode())
-            header = bytearray()
-            while not header.endswith(b'\r\n\r\n') and len(header) < 8192:
-                chunk = connection.recv(1)
-                if not chunk:
-                    return False
-                header.extend(chunk)
-            text = header.decode('latin1')
-            if not text.startswith('HTTP/1.1 101 ') or expected not in text:
-                return False
-            def receive(length):
-                data = b''
-                while len(data) < length:
-                    chunk = connection.recv(length - len(data))
-                    if not chunk:
-                        raise OSError('unexpected websocket EOF')
-                    data += chunk
-                return data
-            frame = receive(2)
-            length = frame[1] & 127
-            if frame[0] & 15 not in (1, 2) or frame[1] & 128 or length > 125:
-                return False
-            return receive(length).startswith(b'RFB 003.')
-    except (OSError, ValueError):
-        return False
 
 
 def parse_listeners(output):
@@ -334,9 +287,6 @@ class LocalBackend:
                 return data.get('ok') is True and data.get('engine') == 'hermes' and '<html' in html.lower() and '<script' in html.lower()
             if name == 'ollama':
                 return isinstance(get_json('http://127.0.0.1:11434/api/tags').get('models'), list)
-            if name == 'tunnels':
-                data = get_json('http://127.0.0.1:9299/json/version')
-                return bool(data.get('Browser')) and data.get('webSocketDebuggerUrl', '').startswith('ws://127.0.0.1:9299/') and vnc_ready()
         except (OSError, ValueError, AttributeError, urllib.error.URLError):
             return False
         return False
@@ -351,13 +301,12 @@ class LocalBackend:
     def preflight(self):
         root = Path(self.config['root'])
         required = [self.config['node'], self.config['ollama'], self.config['ffmpeg'], self.config['stt_hermes'],
-                    self.config['utmctl'], self.config['key'], self.config['known_hosts'],
                     root / '.env', root / 'data/primary-hermes/runtime-hermes', root / 'data/primary-hermes/.env',
-                    root / 'server/dist/index.js', root / 'web/dist/index.html', root / 'scripts/local-utm-tunnels.sh']
+                    root / 'server/dist/index.js', root / 'web/dist/index.html']
         missing = [str(path) for path in required if not Path(path).is_file()]
         if missing:
             raise ServiceError('missing prerequisite(s): ' + ', '.join(missing) + '; build both server and web before starting')
-        for path in (root / '.env.local', root / 'data/primary-hermes/.env', Path(self.config['key'])):
+        for path in (root / '.env.local', root / 'data/primary-hermes/.env'):
             if path.exists() and path.stat().st_mode & 0o077:
                 raise ServiceError('credential file must be private: ' + str(path))
         for name, expected in make_jobs(self.config).items():
@@ -365,43 +314,6 @@ class LocalBackend:
             if path.is_symlink() or path.stat().st_uid != os.getuid() or path.stat().st_mode & 0o077 or plistlib.loads(path.read_bytes()) != expected:
                 raise ServiceError('stale or unsafe job file; rerun install: ' + str(path))
         self.runner(['/bin/launchctl', 'print', self.domain])
-
-    def vm_status(self):
-        return self.runner([self.config['utmctl'], 'status', self.config['vm_uuid']]).stdout.strip().lower()
-
-    def ensure_vm(self):
-        # Explicitly launch UTM without stealing focus; utmctl needs its app/service after login.
-        self.runner(['/usr/bin/open', '-g', '-a', str(Path(self.config['utmctl']).parents[2])])
-        state = self.vm_status()
-        if state == 'started':
-            return
-        if state not in ('stopped', 'suspended', 'paused'):
-            raise ServiceError('existing VM is not in a startable state: ' + state)
-        self.runner([self.config['utmctl'], 'start', '--hide', self.config['vm_uuid']], timeout=60)
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
-            if self.vm_status() == 'started':
-                return
-            time.sleep(2)
-        raise ServiceError('VM start timed out; no VM was created')
-
-    def ensure_ssh(self):
-        c = self.config
-        command = ['/usr/bin/ssh', '-F', '/dev/null', '-p', '2222', '-i', c['key'], '-o', 'BatchMode=yes',
-                   '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + c['known_hosts'],
-                   '-o', 'ConnectTimeout=5', '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
-                   'bot@127.0.0.1', 'hostname; id -un; pwd']
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
-            result = self.runner(command, timeout=10, check=False)
-            if result.returncode == 0:
-                if result.stdout.strip().splitlines() != ['bot-hq', 'bot', '/home/bot']:
-                    raise ServiceError('pinned SSH reached an unexpected guest identity')
-                return
-            if 'HOST IDENTIFICATION HAS CHANGED' in result.stderr or 'Host key verification failed' in result.stderr:
-                raise ServiceError('pinned guest host key verification failed; no key was enrolled')
-            time.sleep(2)
-        raise ServiceError('pinned guest SSH readiness timed out')
 
     def bootstrap(self, name):
         if self.inspect(name)['action'] != 'start':
@@ -433,17 +345,6 @@ class LocalBackend:
             time.sleep(0.5)
         print('Unloaded ' + self.target(name), flush=True)
 
-    def request_vm_shutdown(self):
-        if self.vm_status() == 'stopped':
-            return
-        self.runner([self.config['utmctl'], 'stop', self.config['vm_uuid'], '--request'])
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
-            if self.vm_status() == 'stopped':
-                return
-            time.sleep(2)
-        raise ServiceError('guest did not shut down after request; never forced off')
-
     def open_browser(self):
         self.runner(['/usr/bin/open', 'http://127.0.0.1:8787'])
 
@@ -470,7 +371,6 @@ def bundle_info(config):
                 CFBundleDisplayName='Bot HQ', CFBundleExecutable='BotHQLauncher',
                 CFBundlePackageType='APPL', CFBundleShortVersionString='1.0', CFBundleVersion='1',
                 LSMinimumSystemVersion='13.0', LSUIElement=True, NSHighResolutionCapable=True,
-                NSAppleEventsUsageDescription='Bot HQ needs permission to start and check its dedicated UTM virtual machine. It does not share your Mac folders.',
                 BHLauncherPath=str(Path(config['root']) / 'scripts/local-services.py'), BHRoot=config['root'])
 
 
@@ -515,14 +415,14 @@ def build_app(config, destination):
 
 
 def status_report(backend):
-    report = {'vm_uuid': backend.config['vm_uuid'], 'vm_state': backend.vm_status(), 'services': {}}
-    for name in ('ollama', 'tunnels', 'engine', 'web'):
+    report = {'mode': 'host', 'services': {}}
+    for name in SERVICES:
         try:
             report['services'][name] = backend.inspect(name)
         except ServiceError as error:
             report['services'][name] = {'healthy': False, 'error': str(error)}
-    report['ready'] = report['vm_state'] == 'started' and all(value.get('healthy') for value in report['services'].values())
-    report['managed'] = all(report['services'][name].get('loaded') for name in ('tunnels', 'engine', 'web'))
+    report['ready'] = all(value.get('healthy') for value in report['services'].values())
+    report['managed'] = all(report['services'][name].get('loaded') for name in ('engine', 'web'))
     return report
 
 
@@ -531,13 +431,12 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     install = sub.add_parser('install', help='generate private jobs and compile/sign app; never loads jobs')
     install.add_argument('--app', default=str(Path.home() / 'Applications/Bot HQ.app'))
-    start = sub.add_parser('start', help='start existing VM and required per-login services')
+    start = sub.add_parser('start', help='start the required per-login services on this Mac')
     start.add_argument('--open-browser', action='store_true')
-    stop = sub.add_parser('stop', help='unload only Bot HQ-owned jobs; leave external services and VM alone')
-    stop.add_argument('--shutdown-vm', action='store_true', help='also request graceful shutdown of this exact VM')
-    status = sub.add_parser('status', help='read-only VM, listener ownership and HTTP/RFB health')
+    sub.add_parser('stop', help='unload only Bot HQ-owned jobs; leave external services alone')
+    status = sub.add_parser('status', help='read-only listener ownership and HTTP health')
     status.add_argument('--check', action='store_true', help='exit nonzero unless every component is healthy')
-    status.add_argument('--require-managed', action='store_true', help='also require engine, tunnels and web to be loaded under owned jobs')
+    status.add_argument('--require-managed', action='store_true', help='also require engine and web to be loaded under owned jobs')
     sub.add_parser('preflight', help='read-only prerequisite and plist checks')
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
@@ -568,8 +467,8 @@ def main(argv=None):
             start_services(backend, open_browser=args.open_browser)
             print('Bot HQ ready at http://127.0.0.1:8787')
         else:
-            stop_services(backend, shutdown_vm=args.shutdown_vm)
-            print('Owned jobs unloaded. External services untouched. VM ' + ('shutdown verified.' if args.shutdown_vm else 'left running.'))
+            stop_services(backend)
+            print('Owned jobs unloaded. External services untouched.')
     return 0
 
 

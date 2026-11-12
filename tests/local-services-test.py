@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Offline launcher regressions; never bootstraps jobs or touches real services."""
+"""Offline launcher regressions (host mode); never bootstraps jobs or touches real services."""
 import importlib.util
 from pathlib import Path
 import plistlib
 import tempfile
+import json
 import os
 import unittest
 from unittest.mock import Mock, patch, call
@@ -31,7 +32,8 @@ class LauncherTests(unittest.TestCase):
     def test_private_plists_use_clean_environments_and_no_login_registration(self):
         config = self.config()
         jobs = self.m.make_jobs(config)
-        self.assertEqual(set(jobs), {'engine', 'tunnels', 'web', 'ollama'})
+        self.assertEqual(set(jobs), {'engine', 'web', 'ollama'})
+        self.assertEqual(self.m.SERVICES, ('ollama', 'web', 'engine'))
         for name, job in jobs.items():
             self.assertEqual(job['Label'], 'com.thehound.bothq.' + name)
             self.assertEqual(job['ProgramArguments'][:2], ['/usr/bin/env', '-i'])
@@ -46,7 +48,15 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(jobs['engine']['ProgramArguments'][-3:], ['gateway', 'run', '--no-supervise'])
         self.assertEqual(jobs['web']['WorkingDirectory'], str(ROOT / 'server'))
         self.assertEqual(jobs['web']['ProgramArguments'][-4:], ['/opt/node/bin/node', '--env-file=../.env', '--env-file-if-exists=../.env.local', 'dist/index.js'])
-        self.assertEqual(config['vm_uuid'], 'A1CE5F16-4C0F-42F6-BD61-742708F09212')
+        web = jobs['web']['ProgramArguments']
+        self.assertIn('HQ_HOST=1', web)
+        for forbidden in ('HQ_VM=1', 'HQ_VM_KEY=', 'HQ_VM_KNOWN_HOSTS=', 'HQ_LOCAL=1'):
+            self.assertFalse(any(arg.startswith(forbidden) for arg in web), forbidden)
+        for expected in ('HERMES_HOME_PRIMARY=' + str(ROOT / 'data/primary-hermes'), 'HERMES_BIN=' + str(ROOT / 'data/primary-hermes/runtime-hermes'),
+                         'HERMES_URL=http://127.0.0.1:8642', 'PORT=8787', 'APP_URL=http://127.0.0.1:8787', 'SERVER_URL=http://127.0.0.1:8787'):
+            self.assertIn(expected, web)
+        for legacy in ('vm_uuid', 'utmctl', 'key', 'known_hosts'):
+            self.assertNotIn(legacy, config)
         self.assertEqual(config['state'], str(ROOT / 'data/launchd'))
         self.assertNotIn('Library/LaunchAgents', str(config))
 
@@ -79,19 +89,15 @@ class LauncherTests(unittest.TestCase):
         with self.assertRaises(self.m.ServiceError):
             self.m.service_action('engine', {8642: [owner]}, False, True, config)
 
-    def test_tunnel_identity_requires_dedicated_pins_and_all_forwarded_ports(self):
-        c = self.config()
-        command = '/usr/bin/ssh -NT -p 2222 -i ' + c['key'] + ' -o UserKnownHostsFile=' + c['known_hosts'] + ' -o StrictHostKeyChecking=yes '
-        command += ' '.join('-L 127.0.0.1:%d:127.0.0.1:%d' % (p, p) for p in self.m.TUNNEL_PORTS) + ' bot@127.0.0.1'
-        owner = dict(pid=18, command=command, cwd='/Users/test')
-        owners = {port: [owner] for port in self.m.TUNNEL_PORTS}
-        self.assertEqual(self.m.service_action('tunnels', owners, False, True, c), 'reuse')
-        owners[9302] = []
-        with self.assertRaisesRegex(self.m.ServiceError, 'incomplete.*external'):
-            self.m.service_action('tunnels', owners, False, True, c)
-        owners[9302] = [dict(owner, command=command.replace('StrictHostKeyChecking=yes', 'StrictHostKeyChecking=no'))]
-        with self.assertRaises(self.m.ServiceError):
-            self.m.service_action('tunnels', owners, False, True, c)
+    def test_tunnels_are_gone(self):
+        with self.assertRaises(KeyError):
+            self.m.service_ports('tunnels')
+        self.assertFalse(self.m.recognized_owner('tunnels', dict(pid=13, cwd='/', command='/usr/bin/ssh -NT -p 2222'), self.config()))
+        with self.assertRaisesRegex(self.m.ServiceError, 'not an owned'):
+            self.m.LocalBackend(self.config(), runner=Mock()).target('tunnels')
+        for gone in ('ensure_vm', 'ensure_ssh', 'vm_status', 'request_vm_shutdown'):
+            self.assertFalse(hasattr(self.m.LocalBackend, gone), gone)
+        self.assertFalse(hasattr(self.m, 'vnc_ready'))
 
     def test_install_writes_only_private_project_state(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -101,8 +107,9 @@ class LauncherTests(unittest.TestCase):
             state = root / 'data/launchd'
             self.assertEqual((state.stat().st_mode & 0o777), 0o700)
             self.assertEqual(((root / 'data/logs').stat().st_mode & 0o777), 0o700)
-            for name in ('config.json',) + tuple('com.thehound.bothq.' + name + '.plist' for name in ('engine', 'web', 'tunnels', 'ollama')):
+            for name in ('config.json',) + tuple('com.thehound.bothq.' + name + '.plist' for name in ('engine', 'web', 'ollama')):
                 self.assertEqual(((state / name).stat().st_mode & 0o777), 0o600)
+            self.assertFalse((state / 'com.thehound.bothq.tunnels.plist').exists())
             for name in ('start.command', 'stop.command'):
                 script = state / name
                 self.assertEqual(script.stat().st_mode & 0o777, 0o700)
@@ -112,43 +119,50 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(self.m.load_config(root), c)
             self.m.install_files(c)  # idempotent
 
+    def test_vm_era_config_still_loads_so_install_can_be_rerun(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'repo'
+            c = self.m.make_config(root, Path('/Users/test'), '/opt/node/bin/node', '/usr/local/bin/ollama', '/opt/voice/bin/ffmpeg', '/opt/voice/bin/hermes')
+            old = dict(c, vm_uuid='A1CE5F16-4C0F-42F6-BD61-742708F09212', utmctl='/Users/test/Applications/UTM.app/Contents/MacOS/utmctl',
+                       key='/Users/test/.ssh/bot-hq-utm', known_hosts='/Users/test/VirtualMachines/BotHQ/ssh_known_hosts')
+            self.m.private_write(root / 'data/launchd/config.json', json.dumps(old))
+            self.assertEqual(self.m.load_config(root), c)
+            self.m.install_files(c)
+            self.assertEqual(json.loads((root / 'data/launchd/config.json').read_text()), c)
+            self.m.private_write(root / 'data/launchd/config.json', json.dumps(dict(c, root='/somewhere/else')))
+            with self.assertRaisesRegex(self.m.ServiceError, 'root does not match'):
+                self.m.load_config(root)
+
     def test_start_order_reuses_components_and_rolls_back_only_new_jobs(self):
         backend = Mock()
         backend.inspect.side_effect = lambda name: dict(action='reuse' if name == 'ollama' else 'start')
         self.m.start_services(backend, open_browser=True)
         self.assertEqual(backend.method_calls, [
             call.preflight(),
-            *[call.inspect(n) for n in ('ollama', 'tunnels', 'web', 'engine')],
-            call.ensure_vm(), call.ensure_ssh(),
+            *[call.inspect(n) for n in ('ollama', 'web', 'engine')],
             call.wait_ready('ollama'),
-            *[event for n in ('tunnels', 'web', 'engine') for event in (call.bootstrap(n), call.wait_ready(n))],
+            *[event for n in ('web', 'engine') for event in (call.bootstrap(n), call.wait_ready(n))],
             call.open_browser(),
         ])
         backend = Mock()
-        backend.inspect.side_effect = lambda name: dict(action='reuse' if name in ('ollama', 'engine') else 'start')
-        backend.wait_ready.side_effect = lambda name: (_ for _ in ()).throw(self.m.ServiceError('not ready')) if name == 'web' else None
+        backend.inspect.side_effect = lambda name: dict(action='reuse' if name == 'ollama' else 'start')
+        backend.wait_ready.side_effect = lambda name: (_ for _ in ()).throw(self.m.ServiceError('not ready')) if name == 'engine' else None
         with self.assertRaisesRegex(self.m.ServiceError, 'not ready'):
             self.m.start_services(backend)
-        self.assertEqual(backend.bootout.call_args_list, [call('web'), call('tunnels')])
+        self.assertEqual(backend.bootout.call_args_list, [call('engine'), call('web')])
         backend.open_browser.assert_not_called()
-        backend.request_vm_shutdown.assert_not_called()
 
-    def test_unknown_conflict_aborts_before_vm_or_launchd_writes(self):
+    def test_unknown_conflict_aborts_before_launchd_writes(self):
         backend = Mock()
         backend.inspect.side_effect = self.m.ServiceError('unrecognized listener')
         with self.assertRaises(self.m.ServiceError):
             self.m.start_services(backend)
-        backend.ensure_vm.assert_not_called()
         backend.bootstrap.assert_not_called()
 
-    def test_stop_uses_only_owned_labels_and_leaves_vm_unless_explicit(self):
+    def test_stop_uses_only_owned_labels_in_reverse_start_order(self):
         backend = Mock()
         self.m.stop_services(backend)
-        self.assertEqual(backend.bootout.call_args_list, [call(n) for n in ('web', 'engine', 'tunnels', 'ollama')])
-        backend.request_vm_shutdown.assert_not_called()
-        backend.reset_mock()
-        self.m.stop_services(backend, shutdown_vm=True)
-        backend.request_vm_shutdown.assert_called_once_with()
+        self.assertEqual(backend.bootout.call_args_list, [call(n) for n in ('engine', 'web', 'ollama')])
 
     def test_backend_bootstrap_checks_ports_again_and_verifies_loaded_job(self):
         b = self.m.LocalBackend(self.config(), runner=Mock())
@@ -185,11 +199,31 @@ class LauncherTests(unittest.TestCase):
             self.assertFalse(b.healthy('ollama'))
         with patch.object(self.m, 'get_json', return_value={'models': []}):
             self.assertTrue(b.healthy('ollama'))
-        with patch.object(self.m, 'get_json', return_value={'Browser': 'Chrome', 'webSocketDebuggerUrl': 'ws://127.0.0.1:9299/devtools/browser/test'}), patch.object(self.m, 'vnc_ready', return_value=False):
-            self.assertFalse(b.healthy('tunnels'))
+
+    def test_preflight_needs_no_vm_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'repo'
+            tools = Path(directory) / 'tools'
+            tools.mkdir()
+            for name in ('node', 'ollama', 'ffmpeg', 'hermes'):
+                (tools / name).touch()
+            c = self.m.make_config(root, Path(directory) / 'home', tools / 'node', tools / 'ollama', tools / 'ffmpeg', tools / 'hermes')
+            self.m.install_files(c)
+            for rel in ('.env', 'data/primary-hermes/runtime-hermes', 'data/primary-hermes/.env', 'server/dist/index.js', 'web/dist/index.html'):
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch(mode=0o600)
+            runner = Mock()
+            runner.return_value.returncode = 0
+            b = self.m.LocalBackend(c, runner=runner)
+            b.preflight()  # no UTM, ssh key, known-hosts or tunnel script required
+            self.assertEqual(runner.call_args.args[0], ['/bin/launchctl', 'print', 'gui/%d' % os.getuid()])
+            (root / 'server/dist/index.js').unlink()
+            with self.assertRaisesRegex(self.m.ServiceError, 'missing prerequisite'):
+                b.preflight()
 
     def test_listener_parser_rejects_non_loopback_binds_and_dedupes(self):
-        self.assertEqual(self.m.parse_listeners('p12\nn127.0.0.1:6099\nn127.0.0.1:6099\np13\nn[::1]:8642\n'), {6099: [12], 8642: [13]})
+        self.assertEqual(self.m.parse_listeners('p12\nn127.0.0.1:8787\nn127.0.0.1:8787\np13\nn[::1]:8642\n'), {8787: [12], 8642: [13]})
         with self.assertRaisesRegex(self.m.ServiceError, 'loopback'):
             self.m.parse_listeners('p12\nn*:8787\n')
 
@@ -200,7 +234,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(info['BHLauncherPath'], str(ROOT / 'scripts/local-services.py'))
         self.assertEqual(info['BHRoot'], str(ROOT))
         self.assertTrue(info['LSUIElement'])
-        self.assertIn('UTM', info.get('NSAppleEventsUsageDescription', ''), 'Native launcher must declare its UTM Automation purpose')
+        self.assertNotIn('NSAppleEventsUsageDescription', info, 'host mode drives no VM and needs no Automation permission')
         self.assertNotIn('SMPrivilegedExecutables', info)
         self.assertNotIn('LSBackgroundOnly', info)
 
@@ -229,9 +263,11 @@ class LauncherTests(unittest.TestCase):
     def test_status_distinguishes_healthy_external_from_managed_and_cli_enforces_it(self):
         backend = Mock()
         backend.config = self.config()
-        backend.vm_status.return_value = 'started'
         backend.inspect.return_value = dict(healthy=True, loaded=False)
         report = self.m.status_report(backend)
+        self.assertEqual(report['mode'], 'host')
+        self.assertEqual(set(report['services']), {'ollama', 'web', 'engine'})
+        self.assertNotIn('vm_state', report)
         self.assertTrue(report['ready'])
         self.assertFalse(report['managed'])
         backend.inspect.return_value = dict(healthy=True, loaded=True)
@@ -239,44 +275,15 @@ class LauncherTests(unittest.TestCase):
         with patch.object(self.m, 'load_config', return_value=self.config()), patch.object(self.m, 'LocalBackend', return_value=backend), patch.object(self.m, 'status_report', return_value=report), patch('builtins.print'):
             self.assertEqual(self.m.main(['status', '--check', '--require-managed']), 1)
 
-    def test_malformed_ssh_command_is_a_conflict_not_an_index_error(self):
-        owner = dict(pid=13, cwd='/', command='/usr/bin/ssh -NT -p')
-        self.assertFalse(self.m.recognized_owner('tunnels', owner, self.config()))
-
-    def test_vm_start_launches_utm_app_and_only_starts_the_existing_uuid(self):
-        b = self.m.LocalBackend(self.config(), runner=Mock())
-        b.vm_status = Mock(return_value='started')
-        b.ensure_vm()
-        self.assertEqual(b.runner.call_args_list, [call(['/usr/bin/open', '-g', '-a', '/Users/test/Applications/UTM.app'])])
-        b.runner.reset_mock()
-        b.vm_status = Mock(side_effect=['stopped', 'started'])
-        b.ensure_vm()
-        self.assertEqual(b.runner.call_args_list, [
-            call(['/usr/bin/open', '-g', '-a', '/Users/test/Applications/UTM.app']),
-            call([self.config()['utmctl'], 'start', '--hide', self.m.VM_UUID], timeout=60),
-        ])
-        b.vm_status = Mock(return_value='missing')
-        with self.assertRaisesRegex(self.m.ServiceError, 'not in a startable state'):
-            b.ensure_vm()
-        self.assertFalse(any('create' in str(args) or 'clone' in str(args) for args in b.runner.call_args_list))
-
-    def test_pinned_ssh_rejects_wrong_guest_or_host_key_without_enrollment(self):
-        b = self.m.LocalBackend(self.config(), runner=Mock())
-        b.runner.return_value.returncode = 0
-        b.runner.return_value.stdout = 'bot-hq\nbot\n/home/bot\n'
-        b.ensure_ssh()
-        args = b.runner.call_args.args[0]
-        self.assertIn('StrictHostKeyChecking=yes', args)
-        self.assertIn('UserKnownHostsFile=' + self.config()['known_hosts'], args)
-        self.assertIn('/dev/null', args)
-        self.assertIn('ControlPath=none', args)
-        b.runner.return_value.stdout = 'host-mac\nthehound\n/Users/test\n'
-        with self.assertRaisesRegex(self.m.ServiceError, 'unexpected guest'):
-            b.ensure_ssh()
-        b.runner.return_value.returncode = 255
-        b.runner.return_value.stderr = 'Host key verification failed.'
-        with self.assertRaisesRegex(self.m.ServiceError, 'no key was enrolled'):
-            b.ensure_ssh()
+    def test_cli_stop_has_no_vm_flag_and_only_unloads_owned_jobs(self):
+        backend = Mock()
+        backend.config = self.config()
+        with patch.object(self.m, 'load_config', return_value=self.config()), patch.object(self.m, 'LocalBackend', return_value=backend), \
+                patch.object(self.m, 'lifecycle_lock'), patch('builtins.print'):
+            self.assertEqual(self.m.main(['stop']), 0)
+            self.assertEqual(backend.bootout.call_args_list, [call(n) for n in ('engine', 'web', 'ollama')])
+            with self.assertRaises(SystemExit):
+                self.m.main(['stop', '--shutdown-vm'])
 
 
 if __name__ == '__main__':
