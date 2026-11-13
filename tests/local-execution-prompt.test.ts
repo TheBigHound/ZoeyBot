@@ -29,7 +29,9 @@ test('prompt carries the local voice notes and the ask_bot contract',()=>{
   assert.match(out,/Enable local voice/);
   assert.match(out,/phonon\/Zoey/);
   assert.match(out,/cannot enable it from chat or verify browser playback/);
-  assert.match(out,/Local live voice calls are not supported/);
+  assert.match(out,/blue waveform button/);
+  assert.match(out,/turn-based voice conversation/);
+  assert.doesNotMatch(out,/voice calls are not supported/i);
   assert.doesNotMatch(out,/send_to_bot/);
   assert.match(out,/- ask_bot asks another agent on the team/);
   assert.match(out,/wait=true/);
