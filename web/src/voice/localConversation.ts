@@ -73,6 +73,22 @@ export interface LocalConversationTransport {
   level(): number;
 }
 
+/**
+ * How far a still-streaming reply can be spoken: the end of its last complete sentence (or line) at or after `from`.
+ * A piece shorter than 12 characters ("1. ", "Sure. ") waits for more text, and a full stop only counts when
+ * whitespace follows it, so "3.5" and a sentence still being written are never cut.
+ */
+export function speakableEnd(text: string, from: number): number {
+  const boundary = /[.!?\u2026]+["')\]*_]*\s+|\n+/g;
+  boundary.lastIndex = from;
+  let end = from;
+  for (let m = boundary.exec(text); m; m = boundary.exec(text)) {
+    const stop = m.index + m[0].length;
+    if (text.slice(end, stop).trim().length >= 12) end = stop;
+  }
+  return end;
+}
+
 /** Turn-based only: the mic is disabled from transcription through the actual audio end. */
 export class LocalConversation {
   state: LocalConversationState = EMPTY_LOCAL_CONVERSATION;
@@ -87,6 +103,8 @@ export class LocalConversation {
   private buffered = new Map<number, Row>();
   private queue: string[] = [];
   private seen = new Set<number>();
+  /** Characters of each live assistant row already queued for speech (rows are rewritten while they stream). */
+  private spokenTo = new Map<number, number>();
   private busy = false;
   private heardReply = false;
 
@@ -136,7 +154,7 @@ export class LocalConversation {
     this.floor = Math.max(0, ...snapshot.rows.map((r) => r.seq));
     this.userFloor = this.floor;
     this.generation = snapshot.generation;
-    this.seen.clear(); this.buffered.clear(); this.queue = []; this.heardReply = false;
+    this.seen.clear(); this.spokenTo.clear(); this.buffered.clear(); this.queue = []; this.heardReply = false;
     const epoch = ++this.epoch;
     this.report({ botId: snapshot.botId, status: 'starting', error: null, muted: false, transcript: '', reply: '' });
     try {
@@ -209,9 +227,16 @@ export class LocalConversation {
     if (!['waiting', 'synthesizing', 'speaking'].includes(this.state.status)) return;
     for (const row of [...rows].sort((a, b) => a.seq - b.seq)) {
       const body = row.body;
-      if (row.seq <= this.floor || this.seen.has(row.seq) || body.type !== 'message' || body.role !== 'assistant' || body.streaming || !body.text.trim()) continue;
-      this.seen.add(row.seq);
-      this.queue.push(body.text);
+      if (row.seq <= this.floor || this.seen.has(row.seq) || body.type !== 'message' || body.role !== 'assistant') continue;
+      // Speak each sentence as soon as it is complete instead of waiting for the whole reply.
+      const from = this.spokenTo.get(row.seq) ?? 0;
+      const end = body.streaming ? speakableEnd(body.text, from) : body.text.length;
+      if (end > from) {
+        const piece = body.text.slice(from, end).trim();
+        if (piece) this.queue.push(piece);
+        this.spokenTo.set(row.seq, end);
+      }
+      if (!body.streaming) { this.seen.add(row.seq); this.spokenTo.delete(row.seq); }
     }
     if (this.queue.length && !this.busy) void this.speak();
   }
@@ -223,7 +248,7 @@ export class LocalConversation {
     try {
       while (this.queue.length && !stale()) {
         const text = this.queue.shift()!;
-        this.report({ status: 'synthesizing', reply: text });
+        this.report({ status: 'synthesizing', reply: this.state.reply ? `${this.state.reply} ${text}` : text });
         let remaining = text.trim();
         while (remaining && !stale()) {
           let end = Math.min(400, remaining.length);

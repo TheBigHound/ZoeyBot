@@ -93,6 +93,31 @@ class DecoderContractTests(unittest.TestCase):
         self.assertNotIn('max_new_tokens', options)
         self.assertEqual(options['beam_size'], 3)
 
+    def serve_lines(self, requests):
+        text = ''.join(json.dumps(r) + '\n' for r in requests)
+        output = io.StringIO()
+        with patch('sys.argv', [str(SCRIPT), '--serve']), patch('sys.stdin', io.StringIO(text)), contextlib.redirect_stdout(output):
+            stt.main()
+        return [json.loads(line) for line in output.getvalue().splitlines()]
+
+    def test_serve_loads_the_model_once_for_many_recordings(self):
+        replies = self.serve_lines([{'id': 1, 'path': str(self.wav), 'language': 'en'}, {'id': 2, 'path': str(self.wav), 'language': 'auto'}])
+        self.assertEqual(replies[0], {'ready': True})
+        self.assertEqual(replies[1:], [{'id': 1, 'text': 'First word. Last word.'}, {'id': 2, 'text': 'First word. Last word.'}])
+        self.assertEqual(len(self.constructor_calls), 1)
+        self.assertEqual([c[1]['language'] for c in self.transcribe_calls], ['en', None])
+
+    def test_serve_reports_a_bad_recording_and_keeps_running(self):
+        long = self.root / 'long.wav'
+        write_wav(long, 121)
+        replies = self.serve_lines([{'id': 'a', 'path': str(long)}, {'id': 'b', 'path': str(self.root / 'missing.wav')}, {'id': 'c', 'path': str(self.wav)}])
+        self.assertEqual(replies[1]['id'], 'a')
+        self.assertIn('at most 120 seconds', replies[1]['error'])
+        self.assertEqual(replies[2]['id'], 'b')
+        self.assertTrue(replies[2]['error'])
+        self.assertEqual(replies[3], {'id': 'c', 'text': 'First word. Last word.'})
+        self.assertEqual(len(self.transcribe_calls), 1)
+
     def test_collects_every_yielded_segment_in_order(self):
         self.assertEqual(run_helper(self.wav)['text'], 'First word. Last word.')
 

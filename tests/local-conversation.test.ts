@@ -169,3 +169,56 @@ test('a competing user row racing ahead of our accepted send invalidates the who
   assert.equal(f.controller.state.status, 'off');
   assert.equal(f.events.some((e) => e.startsWith('speak:')), false);
 });
+
+test('a streaming reply is spoken sentence by sentence as it arrives, never twice, with the mic off throughout', async () => {
+  const f = fixture();
+  await f.controller.start(); f.utterance(); await tick();
+  f.snapshot.running = true;
+  const said: string[] = [];
+  f.io.synthesize = async (_bot, text) => { said.push(text); return new Int16Array([1]); };
+  f.controller.receive('fixture', 1, [row(3, 'assistant', 'Tokyo is thirteen hours ahead. So it is', true)]);
+  await tick();
+  assert.deepEqual(said, ['Tokyo is thirteen hours ahead.'], 'the first complete sentence is spoken before the reply is finished');
+  assert.equal(f.controller.state.status, 'speaking');
+  f.controller.receive('fixture', 1, [row(3, 'assistant', 'Tokyo is thirteen hours ahead. So it is early morning there. Want a', true)]);
+  await tick();
+  assert.equal(said.length, 1, 'synthesis stays serial behind playback');
+  f.finishPlay(); await tick();
+  assert.deepEqual(said.slice(1), ['So it is early morning there.']);
+  f.finishPlay(); await tick();
+  assert.equal(f.controller.state.status, 'waiting', 'the bot is still writing: keep waiting, mic off');
+  f.utterance();
+  assert.equal(f.events.filter((e) => e === 'transcribe').length, 1);
+  f.snapshot.running = false;
+  f.controller.receive('fixture', 1, [row(3, 'assistant', 'Tokyo is thirteen hours ahead. So it is early morning there. Want a second clock?')]);
+  await tick();
+  assert.deepEqual(said.slice(2), ['Want a second clock?']);
+  f.controller.receive('fixture', 1, [row(3, 'assistant', 'Tokyo is thirteen hours ahead. So it is early morning there. Want a second clock?')]);
+  f.finishPlay(); await tick();
+  assert.equal(said.length, 3, 'a repeated final row is not spoken again');
+  assert.equal(f.controller.state.status, 'listening');
+  assert.equal(f.controller.state.reply, 'Tokyo is thirteen hours ahead. So it is early morning there. Want a second clock?');
+  f.controller.stop();
+});
+
+test('unfinished text and bare list markers wait for more of the stream', async () => {
+  const f = fixture();
+  await f.controller.start(); f.utterance(); await tick();
+  f.snapshot.running = true;
+  const said: string[] = [];
+  f.io.synthesize = async (_bot, text) => { said.push(text); return new Int16Array([1]); };
+  f.controller.receive('fixture', 1, [row(3, 'assistant', 'The version is 3.5 and it', true)]);
+  await tick();
+  assert.deepEqual(said, [], 'a decimal point is not a sentence end');
+  f.controller.receive('fixture', 1, [row(3, 'assistant', 'The version is 3.5 and it works.\n1. ', true)]);
+  await tick();
+  assert.deepEqual(said, ['The version is 3.5 and it works.'], 'the list marker is held back');
+  f.finishPlay(); await tick();
+  f.snapshot.running = false;
+  f.controller.receive('fixture', 1, [row(3, 'assistant', 'The version is 3.5 and it works.\n1. Open settings')]);
+  await tick();
+  assert.deepEqual(said.slice(1), ['1. Open settings']);
+  f.finishPlay(); await tick();
+  assert.equal(f.controller.state.status, 'listening');
+  f.controller.stop();
+});

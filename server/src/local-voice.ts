@@ -1,5 +1,6 @@
 // Local-only speech. No cloud fallback and no imitation realtime session tokens.
-import { execFile } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -88,7 +89,7 @@ export function voiceMode(settings: NodeJS.ProcessEnv = process.env): 'local' | 
 }
 const sttScript = fileURLToPath(new URL('../src/local-stt.py', import.meta.url));
 let sttRuntime: string[] | undefined;
-async function runStt(args: string[]) {
+async function sttCommand(): Promise<string[]> {
   if (!sttRuntime) {
     const r = await run(process.env.LOCAL_STT_HERMES_BIN || 'hermes', ['--print-runtime-command'], { timeout: 15_000, maxBuffer: 1024 * 1024, encoding: 'utf8' });
     const runtime: unknown = JSON.parse(r.stdout);
@@ -97,7 +98,81 @@ async function runStt(args: string[]) {
     if (!runtime[3].endsWith(marker)) throw new Error('Unsupported Hermes bootstrap command');
     sttRuntime = [runtime[0], '-I', '-c', runtime[3].slice(0, -marker.length) + "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')"];
   }
-  return run(sttRuntime[0], [...sttRuntime.slice(1), sttScript, ...args], { timeout: 120_000, maxBuffer: 1024 * 1024, encoding: 'utf8', env: { ...process.env, HF_HUB_OFFLINE: '1' } });
+  return sttRuntime;
+}
+async function runStt(args: string[]) {
+  const command = await sttCommand();
+  return run(command[0], [...command.slice(1), sttScript, ...args], { timeout: 120_000, maxBuffer: 1024 * 1024, encoding: 'utf8', env: { ...process.env, HF_HUB_OFFLINE: '1' } });
+}
+
+// One long-lived Whisper process. Loading the model costs seconds, and a process per recording paid that on
+// every voice turn. Requests are one JSON line each; replies come back in order (callers are already serial).
+type SttWorker = { child: ChildProcessWithoutNullStreams; ready: Promise<void>; pending: Map<number, { resolve: (text: string) => void; reject: (e: Error) => void }> };
+let sttWorker: SttWorker | undefined;
+let sttRequest = 0;
+async function startSttWorker(): Promise<SttWorker> {
+  const command = await sttCommand();
+  const child = spawn(command[0], [...command.slice(1), sttScript, '--serve'], { env: { ...process.env, HF_HUB_OFFLINE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  // Do not hold a short-lived process (tests, scripts) open; an in-flight request keeps it alive through its timer.
+  child.unref();
+  for (const stream of [child.stdin, child.stdout, child.stderr]) (stream as unknown as { unref?: () => void }).unref?.();
+  const pending: SttWorker['pending'] = new Map();
+  let stderr = '';
+  let announce: (() => void) | undefined;
+  let refuse: ((e: Error) => void) | undefined;
+  const ready = new Promise<void>((resolve, reject) => { announce = resolve; refuse = reject; });
+  ready.catch(() => {});
+  const worker: SttWorker = { child, ready, pending };
+  const fail = (e: Error) => {
+    if (sttWorker === worker) sttWorker = undefined;
+    refuse?.(e);
+    for (const p of pending.values()) p.reject(e);
+    pending.clear();
+  };
+  child.stderr.on('data', (d: Buffer) => { stderr = (stderr + d.toString()).slice(-2000); });
+  child.on('error', (e) => fail(e));
+  child.on('exit', (code) => fail(new Error(`Local transcription worker stopped (${code ?? 'signal'}). ${stderr.trim().split('\n').pop() ?? ''}`.trim())));
+  createInterface({ input: child.stdout }).on('line', (line) => {
+    let message: { ready?: boolean; id?: number; text?: string; error?: string };
+    try { message = JSON.parse(line); } catch { return; }
+    if (message.ready) { announce?.(); return; }
+    const waiter = typeof message.id === 'number' ? pending.get(message.id) : undefined;
+    if (!waiter) return;
+    pending.delete(message.id as number);
+    if (typeof message.text === 'string') waiter.resolve(message.text);
+    else waiter.reject(new Error(message.error || 'Invalid local transcription response'));
+  });
+  return worker;
+}
+/** Start loading the model now so the first voice turn does not wait for it. Never throws. */
+export function warmLocalStt(): void {
+  if (sttWorker || process.env.LOCAL_STT_WORKER === '0') return;
+  void startSttWorker().then((w) => { sttWorker ??= w; if (sttWorker !== w) w.child.kill(); }).catch(() => {});
+}
+/** Stop the worker (tests, shutdown). */
+export function stopLocalStt(): void {
+  sttWorker?.child.kill();
+  sttWorker = undefined;
+}
+async function transcribeWithWorker(path: string, language: string): Promise<string> {
+  // The deadline timer is created first: it is what keeps a short-lived process alive while the model loads.
+  let worker: SttWorker | undefined;
+  let expire: ((e: Error) => void) | undefined;
+  const expired = new Promise<never>((_, reject) => { expire = reject; });
+  expired.catch(() => {});
+  const timer = setTimeout(() => { worker?.child.kill(); expire?.(new Error('Local transcription timed out')); }, 120_000);
+  try {
+    sttWorker ??= await startSttWorker();
+    worker = sttWorker;
+    await Promise.race([worker.ready, expired]);
+    const id = ++sttRequest;
+    const active = worker;
+    const reply = new Promise<string>((resolve, reject) => { active.pending.set(id, { resolve, reject }); });
+    active.child.stdin.write(JSON.stringify({ id, path, language }) + '\n');
+    return await Promise.race([reply, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 let sttCheck: { at: number; available: boolean } | undefined;
 let transcriptionBusy = false;
@@ -109,6 +184,7 @@ async function localSttAvailable(): Promise<boolean> {
     available = JSON.parse(r.stdout).available === true;
   } catch { /* Missing installed runtime/weights: explicitly unavailable, never cloud fallback. */ }
   sttCheck = { at: Date.now(), available };
+  if (available) warmLocalStt();
   return available;
 }
 
@@ -126,7 +202,9 @@ export async function transcribeLocal(audio: Buffer, language = 'auto'): Promise
     dir = await mkdtemp(join(root, 'stt-'));
     const input = join(dir, 'recording');
     await writeFile(input, audio, { mode: 0o600 });
-    const r = await runStt([input, language.split('-')[0]]);
+    const lang = language.split('-')[0];
+    if (process.env.LOCAL_STT_WORKER !== '0') return await transcribeWithWorker(input, lang);
+    const r = await runStt([input, lang]);
     const output = JSON.parse(r.stdout) as { text?: string };
     if (typeof output.text !== 'string') throw new Error('Invalid local transcription response');
     return output.text;
