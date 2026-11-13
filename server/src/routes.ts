@@ -192,6 +192,13 @@ api.patch('/bots/:id', async (c) => {
   for (const [k, col] of Object.entries(cols)) {
     if (p[k] !== undefined) db.prepare(`UPDATE bots SET ${col}=?, updated_at=? WHERE id=?`).run(typeof p[k] === 'boolean' ? (p[k] ? 1 : 0) : p[k], now(), b.id);
   }
+  if (p.avatarImage !== undefined) {
+    // Custom avatar: a bounded data URL of a raster image, or null to go back to shape/color.
+    const img = p.avatarImage;
+    const ok = img === null || (typeof img === 'string' && img.length <= 560_000 && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(img));
+    if (!ok) return c.json({ error: 'avatarImage must be null or a data:image/png|jpeg|webp;base64 URL up to 400 KB' }, 400);
+    db.prepare('UPDATE bots SET avatar_image=?, updated_at=? WHERE id=?').run(img, now(), b.id);
+  }
   if (b.kind !== 'room' && ['name', 'label', 'description'].some((k) => p[k] !== undefined)) syncPersona(b.id);
   emitBot(b.id);
   return c.json({ bot: getBot(b.id) });

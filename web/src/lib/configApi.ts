@@ -27,7 +27,7 @@ export interface BotSettingsBundle {
 /** One folder of a bot's Library (`<Hermes home>/library` on this Mac). */
 export interface LibraryListing { status: 'ok' | 'error'; path: string; files: LibraryFile[]; error?: string }
 
-export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'effort' | 'mode'>>;
+export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode'>>;
 
 export interface EnginePatch { provider?: string | null; model?: string | null; cwd?: string; toolsets?: string[] }
 

@@ -26,11 +26,25 @@ interface Props {
   ring?: boolean;
   className?: string;
   title?: string;
+  /** Custom raster avatar (data URL); when set it replaces the shape/color drawing. */
+  image?: string | null;
 }
 
 const OVERDRAW = 55.2 / 36;
 
-export function BotAvatar({ shape, color, size, star, ring, className, title }: Props) {
+export function BotAvatar({ shape, color, size, star, ring, className, title, image }: Props) {
+  if (image) {
+    return (
+      <span className={`bot-avatar bot-avatar--image ${className ?? ''}`} style={{ width: size, height: size }} title={title} role="img" aria-label={title}>
+        <img className="bot-avatar__img" src={image} alt="" draggable={false} style={ring ? { boxShadow: '0 0 0 2px #FFFFFF, 0 0 0 4px #1C1C1C3D' } : undefined} />
+        {star && (
+          <span className="bot-avatar__star" style={{ width: size * 0.2667, height: size * 0.2667 }}>
+            <Icon name="star" size={size * 0.1333} color="#FFFFFF" />
+          </span>
+        )}
+      </span>
+    );
+  }
   const def = shapeDef(shape);
   const draw = size * OVERDRAW;
   const off = (draw - size) / 2;
@@ -55,6 +69,6 @@ export function BotAvatar({ shape, color, size, star, ring, className, title }: 
   );
 }
 
-export function BotAvatarFor({ bot, size, star, className }: { bot: Pick<Bot, 'avatarShape' | 'avatarColor' | 'name'> & { isPrimary?: boolean }; size: number; star?: boolean; className?: string }) {
-  return <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} star={star} className={className} title={bot.name} />;
+export function BotAvatarFor({ bot, size, star, className }: { bot: Pick<Bot, 'avatarShape' | 'avatarColor' | 'name'> & { isPrimary?: boolean; avatarImage?: string | null }; size: number; star?: boolean; className?: string }) {
+  return <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} star={star} className={className} title={bot.name} image={bot.avatarImage ?? null} />;
 }

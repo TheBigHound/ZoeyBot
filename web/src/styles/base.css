@@ -77,6 +77,8 @@ a { color: inherit; }
 
 .bot-avatar { position: relative; display: inline-block; flex-shrink: 0; }
 .bot-avatar svg { pointer-events: none; }
+.bot-avatar--image { border-radius: 50%; overflow: visible; }
+.bot-avatar__img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; background: #1C1C1C; }
 .bot-avatar__star {
   position: absolute; right: 0; bottom: 0; border-radius: var(--radius-full);
   background: var(--color-bot-yellow); box-shadow: var(--color-bg-tertiary) 0 0 0 0.5px inset;

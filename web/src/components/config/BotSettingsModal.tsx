@@ -103,6 +103,36 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
   const put = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const flash = (text: string, tone: 'ok' | 'error' = 'ok') => { setNote({ text, tone }); setTimeout(() => setNote(null), 2400); };
 
+  const setAvatarImage = async (image: string | null) => {
+    try {
+      const { bot: next } = await configApi.updateBot(bot.id, { avatarImage: image });
+      useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === next.id ? next : b)) }));
+      flash(image ? 'Avatar image set' : 'Avatar image removed');
+    } catch (e) {
+      flash((e as Error).message, 'error');
+    }
+  };
+  /** Downscale to a 192px square PNG on a transparent canvas so the stored data URL stays small. */
+  const uploadAvatar = (file: File) => new Promise<void>((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = async () => {
+      const side = 192;
+      const canvas = document.createElement('canvas');
+      canvas.width = side; canvas.height = side;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const scale = Math.min(side / img.width, side / img.height);
+        const w = img.width * scale, h = img.height * scale;
+        ctx.drawImage(img, (side - w) / 2, (side - h) / 2, w, h);
+        await setAvatarImage(canvas.toDataURL('image/png'));
+      }
+      URL.revokeObjectURL(url); resolve();
+    };
+    img.onerror = () => { flash('Could not read that image', 'error'); URL.revokeObjectURL(url); resolve(); };
+    img.src = url;
+  });
+
   const save = async () => {
     if (!dirty || !nameOk) return;
     setSaving(true);
@@ -123,12 +153,21 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
     <div className="cfg-page">
       <section className="cfg-section">
         <div className="cfg-look">
-          <BotAvatar shape={draft.avatarShape} color={draft.avatarColor} size={72} />
+          <BotAvatar shape={draft.avatarShape} color={draft.avatarColor} size={72} image={bot.avatarImage} />
           <div className="cfg-look__text">
             <div className="cfg-look__name">{draft.name || 'New Bot'}</div>
-            <button type="button" className="cfg-btn cfg-btn--secondary" onClick={() => setPicker(!picker)} aria-expanded={picker}>
-              {picker ? 'Done' : 'Change look'}
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" className="cfg-btn cfg-btn--secondary" onClick={() => setPicker(!picker)} aria-expanded={picker}>
+                {picker ? 'Done' : 'Change look'}
+              </button>
+              <label className="cfg-btn cfg-btn--secondary" style={{ cursor: 'pointer' }}>
+                Upload image
+                <input type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadAvatar(f); e.target.value = ''; }} />
+              </label>
+              {bot.avatarImage && (
+                <button type="button" className="cfg-btn cfg-btn--secondary" onClick={() => void setAvatarImage(null)}>Remove image</button>
+              )}
+            </div>
           </div>
         </div>
         {picker && <LookPicker shape={draft.avatarShape} color={draft.avatarColor} onShape={(s) => put('avatarShape', s)} onColor={(c) => put('avatarColor', c)} />}

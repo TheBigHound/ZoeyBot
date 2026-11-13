@@ -18,6 +18,8 @@ export interface Bot {
   instructions: string;
   avatarShape: AvatarShape;
   avatarColor: AvatarColor;
+  /** Optional custom avatar as a data:image/... URL (PNG/JPEG/WebP, <= 400 KB); overrides shape/color when set. */
+  avatarImage: string | null;
   mode: 'personal' | 'teammate';
   isPrimary: boolean;
   /** 'room' = group chat (members answer instead of the bot itself). */
