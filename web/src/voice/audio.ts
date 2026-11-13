@@ -2,34 +2,44 @@
 
 export const RATE = 24000;
 
-// The worklet runs at the context's native rate (usually 48 kHz). It box-filters down to 24 kHz,
-// converts to Int16 and posts 40 ms frames plus a level for the UI.
-const WORKLET = `
+// The worklet runs at the context's rate. That is usually 48 kHz, but a context follows the output device,
+// and a Bluetooth speaker in hands-free mode runs at 8 or 16 kHz. Above 24 kHz it box-filters down; below
+// it interpolates up. Either way it posts real-time 24 kHz Int16 in 40 ms frames plus a level for the UI.
+// (Emitting one sample per input below 24 kHz sped speech up and Whisper returned nothing.)
+export const WORKLET = `
 class Pcm16Capture extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.target = (options.processorOptions && options.processorOptions.rate) || 24000;
     this.ratio = sampleRate / this.target;
     this.frame = new Int16Array(Math.round(this.target * 0.04));
-    this.n = 0; this.sum = 0; this.cnt = 0; this.t = 0; this.peak = 0;
+    this.n = 0; this.sum = 0; this.cnt = 0; this.t = 0; this.peak = 0; this.prev = 0;
+  }
+  emit(v) {
+    v = v > 1 ? 1 : v < -1 ? -1 : v;
+    this.frame[this.n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
+    if (this.n === this.frame.length) {
+      const out = this.frame.slice(0);
+      this.port.postMessage({ pcm: out.buffer, level: this.peak }, [out.buffer]);
+      this.n = 0; this.peak = 0;
+    }
   }
   process(inputs) {
     const ch = inputs[0] && inputs[0][0];
     if (!ch) return true;
     for (let i = 0; i < ch.length; i++) {
       const s = ch[i];
-      this.sum += s; this.cnt++; this.t += 1;
       const a = s < 0 ? -s : s; if (a > this.peak) this.peak = a;
-      if (this.t >= this.ratio) {
-        this.t -= this.ratio;
-        let v = this.sum / this.cnt; this.sum = 0; this.cnt = 0;
-        v = v > 1 ? 1 : v < -1 ? -1 : v;
-        this.frame[this.n++] = v < 0 ? v * 0x8000 : v * 0x7fff;
-        if (this.n === this.frame.length) {
-          const out = this.frame.slice(0);
-          this.port.postMessage({ pcm: out.buffer, level: this.peak }, [out.buffer]);
-          this.n = 0; this.peak = 0;
+      if (this.ratio >= 1) {
+        this.sum += s; this.cnt++; this.t += 1;
+        if (this.t >= this.ratio) {
+          this.t -= this.ratio;
+          const v = this.sum / this.cnt; this.sum = 0; this.cnt = 0;
+          this.emit(v);
         }
+      } else {
+        while (this.t < 1) { this.emit(this.prev + (s - this.prev) * this.t); this.t += this.ratio; }
+        this.t -= 1; this.prev = s;
       }
     }
     return true;
@@ -48,10 +58,14 @@ async function ensureWorklet(ctx: AudioContext) {
   loadedContexts.add(ctx);
 }
 
-/** Create (and resume) an AudioContext. Call this synchronously inside a click handler so autoplay rules allow it. */
+/** Create (and resume) a 24 kHz AudioContext. Call this synchronously inside a click handler so autoplay rules allow it. */
 export function createAudioContext(): AudioContext {
   const Ctx: typeof AudioContext = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const ctx = new Ctx({ latencyHint: 'interactive' });
+  // Ask for the pipeline's own rate. Left to default, the context takes the output device's rate, which is
+  // 8 kHz when that device is a Bluetooth speaker in hands-free mode: telephone-quality playback and capture.
+  let ctx: AudioContext;
+  try { ctx = new Ctx({ latencyHint: 'interactive', sampleRate: RATE }); }
+  catch { ctx = new Ctx({ latencyHint: 'interactive' }); }
   void ctx.resume().catch(() => {});
   return ctx;
 }
