@@ -107,7 +107,7 @@ def make_jobs(config):
                        StandardOutPath=str(Path(c['logs']) / (name + '.out.log')),
                        StandardErrorPath=str(Path(c['logs']) / (name + '.err.log')),
                        RunAtLoad=True, KeepAlive=True, ThrottleInterval=15, ExitTimeOut=20, Umask=0o077,
-                       ProcessType='Background') for name, command in commands.items()}
+                       ProcessType='Interactive') for name, command in commands.items()}
 
 
 def private_directory(path):

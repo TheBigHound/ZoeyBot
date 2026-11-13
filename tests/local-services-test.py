@@ -39,6 +39,9 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(job['ProgramArguments'][:2], ['/usr/bin/env', '-i'])
             self.assertTrue(job['RunAtLoad'])
             self.assertTrue(job['KeepAlive'])
+            # Background jobs (and the Whisper worker they spawn) are held on efficiency cores:
+            # a 0.8 s transcription took 2.6 s. These jobs serve someone who is waiting.
+            self.assertEqual(job['ProcessType'], 'Interactive')
             self.assertEqual(job['Umask'], 0o077)
             self.assertEqual(plistlib.loads(plistlib.dumps(job)), job)
             self.assertIn('/data/logs/', job['StandardErrorPath'])
