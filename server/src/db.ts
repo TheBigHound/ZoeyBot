@@ -166,6 +166,10 @@ addColumn('bots', 'handback_at', 'INTEGER');
 // Host mode: each bot's working directory and tool allowlist (JSON array of Hermes toolset names).
 addColumn('bots', 'cwd', 'TEXT');
 addColumn('bots', 'toolsets', 'TEXT');
+// Bot builder: `builder` marks the one bot allowed to call create_bot/configure_bot_engine/seed_bot_skill
+// (set by hand in the DB, never through a route or tool); `created_by` is the builder that made a bot.
+addColumn('bots', 'builder', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('bots', 'created_by', 'TEXT');
 addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');
 

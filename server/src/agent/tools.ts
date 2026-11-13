@@ -13,6 +13,7 @@ import { setCheckins } from '../proactive.js';
 import { createRoom, postToRoom } from './rooms.js';
 import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
+import { BUILDER_TOOLS } from './builder.js';
 
 export interface ToolCtx {
   userId: string;
@@ -21,6 +22,12 @@ export interface ToolCtx {
   depth: number;
   /** ask_bot's machinery in the agent loop: post the request to the target, run its turn at hop `depth`, bring the answer back. */
   askBot: (toBotId: string, request: string, wait: boolean, depth: number) => Promise<{ output: string; summary: string }>;
+  /** What started the running turn ('user', 'routine', 'bot', 'ask', 'system'); null when the call came from outside a turn of ours. */
+  origin: string | null;
+  /** Put an approval card in this bot's chat ("Allow <bot> to <action>?" with `details` underneath) and wait for the owner. */
+  approve: (action: string, details: Record<string, string>) => Promise<'allow' | 'deny' | 'expired'>;
+  /** Whether a bot is in the middle of a turn. */
+  isBusy: (botId: string) => boolean;
 }
 
 export interface ToolResult {
@@ -33,8 +40,13 @@ export interface ToolResult {
 
 type Impl = (args: any, ctx: ToolCtx) => Promise<ToolResult>;
 
-interface ToolDef {
+export interface ToolDef {
   name: string;
+  /**
+   * Bot-builder tools (see builder.ts). Only a bot whose row has builder=1 sees or may call them;
+   * 'write' ones additionally need a turn the owner started in that bot's chat. Enforced in mcp.ts.
+   */
+  builder?: 'read' | 'write';
   description: string;
   parameters: Record<string, unknown>;
   activity: ActivityKind;
@@ -362,6 +374,7 @@ export const TOOLS: ToolDef[] = [
       return { output: `Asked the user to connect ${info.name}. Stop here; you'll be told when it's connected.`, endTurn: true };
     },
   },
+  ...BUILDER_TOOLS,
 ];
 
 export const toolMap = new Map(TOOLS.map((t) => [t.name, t]));

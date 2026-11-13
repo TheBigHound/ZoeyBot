@@ -190,6 +190,8 @@ interface Turn {
   userId: string;
   /** How many bot-to-bot hops led here (ask_bot stops a ping-pong at 3). */
   depth: number;
+  /** What started this turn: the person ('user'), a routine, another bot ('bot'/'ask') or the app ('system'). */
+  origin: Trigger['type'];
   /** A tool ended the conversation for now (asked the user, stayed silent): drop any closing text. */
   silent: boolean;
   tools: ToolRef[];
@@ -200,6 +202,9 @@ interface Turn {
 const turns = new Map<string, Turn>();
 
 export const turnDepth = (botId: string) => turns.get(botId)?.depth ?? 0;
+
+/** What started the bot's running turn, or null when no turn of ours is running. */
+export const turnOrigin = (botId: string): Trigger['type'] | null => turns.get(botId)?.origin ?? null;
 
 export function markSilent(botId: string) {
   const t = turns.get(botId);
@@ -414,7 +419,7 @@ async function runTurn(botId: string, trigger: Trigger): Promise<string> {
   const userId: string = bot.user_id;
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);
-  const turn: Turn = { botId, userId, depth: trigger.type === 'bot' || trigger.type === 'ask' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map() };
+  const turn: Turn = { botId, userId, origin: trigger.type, depth: trigger.type === 'bot' || trigger.type === 'ask' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map() };
   turns.set(botId, turn);
   setLive(botId, { isRunning: true, activity: { kind: 'thinking', since: now() }, awaiting: null, startedAt: now(), caption: null, steps: 0 });
 

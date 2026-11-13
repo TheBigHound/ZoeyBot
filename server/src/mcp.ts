@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { getBotRow } from './store.js';
 import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
-import { askBot, claimToolRow, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
+import { askBot, claimToolRow, isBotBusy, markSilent, noteToolOutcome, requestApproval, turnDepth, turnOrigin } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
 import { DEFAULT_TOOLSETS, validToolsets } from './engine-runtime.js';
 
@@ -64,8 +64,9 @@ function caller(slug: string, auth: string | undefined): { botId: string | null 
 }
 
 async function listTools(botId: string | null) {
-  const own = TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters }));
   const bot = botId ? getBotRow(botId) : null;
+  // The bot-builder tools exist only for the one bot marked as the builder.
+  const own = TOOLS.filter((t) => !t.builder || !!bot?.builder).map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters }));
   if (!bot) return own;
   const apps = (await mcpDeps.composioTools(bot.user_id))
     .filter((t: any) => t?.type === 'function' && typeof t.name === 'string' && !toolMap.has(t.name) && appToolAllowed(bot, t.name))
@@ -79,9 +80,25 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
   const userId: string = bot.user_id;
   const name = [...toolMap.keys()].find((k) => k.toLowerCase() === rawName.toLowerCase()) ?? rawName;
   const rowSeq = await claimToolRow(botId, name);
-  const ctx: ToolCtx = { userId, botId, depth: turnDepth(botId), askBot: (to, request, wait, depth) => askBot(botId, to, request, wait, depth) };
+  const ctx: ToolCtx = {
+    userId, botId, depth: turnDepth(botId), origin: turnOrigin(botId),
+    askBot: (to, request, wait, depth) => askBot(botId, to, request, wait, depth),
+    approve: (action, details) => requestApproval({ userId, botId }, { key: name, title: action }, details, rowSeq),
+    isBusy: isBotBusy,
+  };
   try {
     const own = toolMap.get(name);
+    if (own?.builder) {
+      // The gate for building and changing bots lives here, where no prompt can talk its way past it.
+      if (!bot.builder) {
+        noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Only the bot builder may do this' });
+        return text(`${name} is not available to you. Only the team's bot builder can create or change bots; the owner asks it directly in its own chat.`, true);
+      }
+      if (own.builder === 'write' && ctx.origin !== 'user') {
+        noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Only in a turn the owner started' });
+        return text(`${name} only works in a turn the owner started in your own chat (this one was started by: ${ctx.origin ?? 'nothing the app knows of'}). Say that bots are built by talking to you directly.`, true);
+      }
+    }
     if (own) {
       const r = await own.impl(args, ctx);
       if (r.endTurn) markSilent(botId);
