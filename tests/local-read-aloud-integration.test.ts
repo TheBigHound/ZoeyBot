@@ -38,8 +38,13 @@ test('real store live events trigger new speech, but opening/loading transcript 
     useStore.getState().handleEvent({ type: 'rows', botId: 'fixture', generation: 1, rows: [row(3, 'final spoken reply')] });
     await new Promise((r) => setImmediate(r));
     assert.deepEqual(spoken, ['final spoken reply']);
-    useStore.setState({ selectedBotId: 'another-fixture' });
-    assert.equal(c.enabled, false);
+    // Switching bots keeps voice on; the other bot's existing history is never read.
+    useStore.setState({ selectedBotId: 'another-fixture', transcripts: { ...useStore.getState().transcripts, 'another-fixture': { generation: 1, loaded: true, bySeq: { 5: { ...row(5, 'other history'), botId: 'another-fixture' } } } } });
+    assert.equal(c.enabled, true);
+    useStore.getState().handleEvent({ type: 'rows', botId: 'fixture', generation: 1, rows: [row(4, 'previous bot keeps talking in the background')] });
+    useStore.getState().handleEvent({ type: 'rows', botId: 'another-fixture', generation: 1, rows: [{ ...row(6, 'new reply from the selected bot'), botId: 'another-fixture' }] });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(spoken, ['final spoken reply', 'new reply from the selected bot']);
   } finally { unbind(); }
 });
 

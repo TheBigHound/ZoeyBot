@@ -45,6 +45,7 @@ export class LocalReadAloud {
   private botId: string | null = null;
   private generation = 0;
   private floor = 0;
+  private loaded = false;
   private seen = new Set<number>();
   private queue: string[] = [];
   private busy = false;
@@ -59,6 +60,7 @@ export class LocalReadAloud {
   private baseline(snapshot: ReadAloudSnapshot) {
     this.botId = snapshot.botId;
     this.generation = snapshot.generation;
+    this.loaded = snapshot.loaded;
     this.floor = Math.max(0, ...snapshot.rows.map((r) => r.seq));
     this.seen.clear();
   }
@@ -97,15 +99,24 @@ export class LocalReadAloud {
   }
 
   observe(snapshot: ReadAloudSnapshot) {
-    if (snapshot.botId !== this.botId) { this.disable(); return; }
+    if (snapshot.botId !== this.botId) {
+      // Voice follows the selected bot: drop whatever the previous bot was saying and
+      // start fresh on the new one. Its voice is resolved server-side from botId.
+      this.cancel();
+      this.baseline(snapshot);
+      return;
+    }
     if (snapshot.generation !== this.generation) {
       this.cancel();
       this.baseline(snapshot);
+      return;
     }
+    // History finished loading for the current bot: take the real floor so it is never replayed.
+    if (snapshot.loaded && !this.loaded) this.baseline(snapshot);
   }
 
   receive(botId: string, generation: number, rows: Row[]) {
-    if (!this.enabled || botId !== this.botId || generation !== this.generation) return;
+    if (!this.enabled || !this.loaded || botId !== this.botId || generation !== this.generation) return;
     const newestUser = Math.max(0, ...rows.filter((r) => r.body.type === 'message' && r.body.role === 'user').map((r) => r.seq));
     if (newestUser > this.floor) {
       this.floor = newestUser;

@@ -9,16 +9,17 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 async function harness() {
   const { LocalReadAloud } = await import('../web/src/voice/readAloud.ts');
   const spoken: string[] = [];
+  const botIds: string[] = [];
   let activations = 0;
   let clears = 0;
   const controller = new LocalReadAloud({
     activate: async () => { activations++; },
-    synthesize: async (_botId: string, text: string) => { spoken.push(text); return new Int16Array([1, 2]); },
+    synthesize: async (botId: string, text: string) => { botIds.push(botId); spoken.push(text); return new Int16Array([1, 2]); },
     play: async () => {},
     clear: () => { clears++; },
     close: () => {},
   });
-  return { controller, spoken, activations: () => activations, clears: () => clears };
+  return { controller, spoken, botIds, activations: () => activations, clears: () => clears };
 }
 
 test('enabling voice can speak a confirmation without replaying history', async () => {
@@ -115,11 +116,19 @@ test('bot switch disables speech; conversation reset cancels and never reads the
   h.controller.receive('zoey', 2, [row(50, 'reset history'), row(51, 'new conversation reply')]);
   await tick();
   assert.deepEqual(h.spoken, ['new conversation reply']);
-  h.controller.observe(snapshot([], { botId: 'other' }));
-  assert.equal(h.controller.enabled, false);
+  // Switching bots keeps voice on and follows the selected bot (its own voice is resolved server-side by botId).
+  h.controller.observe(snapshot([], { botId: 'other', loaded: false }));
+  assert.equal(h.controller.enabled, true);
   h.controller.receive('zoey', 2, [row(52, 'background bot')]);
+  h.controller.receive('other', 1, [row(7, 'arrived while history still loading')]);
   await tick();
-  assert.deepEqual(h.spoken, ['new conversation reply']);
+  assert.deepEqual(h.spoken, ['new conversation reply'], 'background bots and unloaded transcripts are never spoken');
+  h.controller.observe(snapshot([row(7, 'other history'), row(8, 'other history 2')], { botId: 'other' }));
+  h.controller.receive('other', 1, [row(8, 'other history 2')]);
+  h.controller.receive('other', 1, [row(9, 'fresh reply from other bot')]);
+  await tick();
+  assert.deepEqual(h.spoken, ['new conversation reply', 'fresh reply from other bot']);
+  assert.deepEqual(h.botIds.slice(-1), ['other'], 'synthesis is requested for the newly selected bot');
 });
 
 test('cancel during audio activation cannot turn speech back on', async () => {
