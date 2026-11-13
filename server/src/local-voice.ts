@@ -143,6 +143,6 @@ export async function localVoiceOptions() {
     voices: (await localVoices()).map((id) => ({ id, name: id, gender: id === defaultVoice() ? 'female' : 'unknown' })),
     languages: [{ code: 'auto', name: 'Model default (English)' }, { code: 'en', name: 'English' }],
     speeds: [1],
-    callDisabledReason: 'Local voice supports preview and dictation, not live voice calls. Use the microphone to dictate into chat.',
+    callDisabledReason: 'Realtime (interruptible) calls are not available locally. Use the turn-based voice conversation: the waveform button in the message box.',
   };
 }

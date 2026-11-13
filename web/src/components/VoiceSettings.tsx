@@ -3,6 +3,8 @@ import type { Bot } from '@shared/types';
 import { useStore } from '../store';
 import { voiceApi, type VoiceOptions } from '../voice/api';
 import { endCall, isCallActive, previewVoice, startCall, useVoice } from '../voice/call';
+import { supportsLocalConversation } from '../voice/localConversationBrowser';
+import { endLocalConversation, startLocalConversation, useLocalConversation } from '../voice/localConversationStore';
 import { Icon } from './Icon';
 
 const FALLBACK: VoiceOptions = {
@@ -42,6 +44,7 @@ export function VoiceSettings({ bot }: { bot: Bot }) {
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inCall = useVoice((s) => isCallActive(s) && s.botId === bot.id);
+  const localInCall = useLocalConversation((s) => s.botId === bot.id && s.status !== 'off' && s.status !== 'error');
 
   useEffect(() => { voiceApi.options().then(setOpts).catch(() => {}); }, []);
   useEffect(() => setError(null), [bot.id]);
@@ -69,6 +72,7 @@ export function VoiceSettings({ bot }: { bot: Bot }) {
   };
 
   const local = opts.provider === 'local';
+  const localTalk = supportsLocalConversation(opts);
   const voices = local || opts.voices.some((v) => v.id === bot.voice) ? opts.voices : [{ id: bot.voice, name: bot.voice }, ...opts.voices];
   const speeds = local || opts.speeds.includes(bot.voiceSpeed) ? opts.speeds : [...opts.speeds, bot.voiceSpeed].sort((a, b) => a - b);
   // Local mode: show the bot's own voice when the local model has it, else the default (first) voice.
@@ -91,10 +95,17 @@ export function VoiceSettings({ bot }: { bot: Bot }) {
         <span>Language</span>
         <NativeSelect label="Language" value={local ? 'auto' : bot.voiceLanguage} options={opts.languages.map((l) => ({ value: l.code, label: l.name }))} onChange={(voiceLanguage) => save({ voiceLanguage })} />
       </div>
-      <button type="button" className={`panel-row panel-row--action panel-row--call${inCall ? ' is-active' : ''}`} disabled={!inCall && !opts.capabilities.calls} title={opts.callDisabledReason} onClick={() => (inCall ? endCall() : startCall(bot.id))}>
-        <Icon name="voice_a" size={14} opacity={inCall ? 1 : 0.56} /> {inCall ? 'End voice chat' : opts.capabilities.calls ? 'Start voice chat' : 'Voice calls unavailable'}
-      </button>
-      {local && <div className="voice-error">Local Zoey speech preview · {opts.capabilities.stt ? 'Local microphone dictation available.' : 'Local transcription unavailable.'} {opts.callDisabledReason}</div>}
+      {localTalk ? (
+        <button type="button" className={`panel-row panel-row--action panel-row--call${localInCall ? ' is-active' : ''}`} title="Turn-based: speak, pause about a second, hear the reply. Runs on this Mac." onClick={() => (localInCall ? endLocalConversation() : startLocalConversation(bot.id))}>
+          <Icon name="voice_a" size={14} opacity={localInCall ? 1 : 0.56} /> {localInCall ? 'End voice conversation' : 'Start voice conversation'}
+        </button>
+      ) : (
+        <button type="button" className={`panel-row panel-row--action panel-row--call${inCall ? ' is-active' : ''}`} disabled={!inCall && !opts.capabilities.calls} title={opts.callDisabledReason} onClick={() => (inCall ? endCall() : startCall(bot.id))}>
+          <Icon name="voice_a" size={14} opacity={inCall ? 1 : 0.56} /> {inCall ? 'End voice chat' : opts.capabilities.calls ? 'Start voice chat' : 'Voice calls unavailable'}
+        </button>
+      )}
+      {local && localTalk && <div className="voice-note">Turn-based voice conversation, dictation and read-aloud all run on this Mac (Whisper + phonon). Same as the blue waveform button in the message box.</div>}
+      {local && !localTalk && <div className="voice-error">Local Zoey speech preview · {opts.capabilities.stt ? 'Local microphone dictation available.' : 'Local transcription unavailable.'} {opts.callDisabledReason}</div>}
       {error && <div className="voice-error">{error}</div>}
     </div>
   );

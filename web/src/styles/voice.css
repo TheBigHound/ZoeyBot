@@ -114,6 +114,7 @@
 .panel-row--call { gap: 8px; color: var(--color-ink); font-size: 13px; }
 .panel-row--call.is-active { color: var(--color-danger); }
 .voice-error { padding: 4px 12px 8px; font-size: 12px; color: var(--color-danger); }
+.voice-note { padding: 4px 12px 8px; font-size: 12px; opacity: 0.6; }
 
 /* ---------- local turn-based voice panel (sits above the composer; separate from cloud realtime calls) ---------- */
 .voice-panel {
