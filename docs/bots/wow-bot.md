@@ -37,3 +37,18 @@ Acceptance test: asked for the drop location and stats of a made-up item ("Thorn
 | Lists what it tried when the web is empty | FAIL | Reply said it found nothing on other sites without naming the queries |
 
 Diagnosis, not confirmed: the test turn ran in a conversation with history=89, and a long conversation can outweigh new instructions. No second instruction change was made. A fresh conversation for WOW Bot is the owner's call.
+
+### 2026-11-13: last-resort rule scoped to the owner's questions
+Request (owner): "this is for when I am asking it a question". Read as: the fallback should not run in turns the owner did not start (WoW Watch handoffs had started 5 of WOW Bot's turns).
+
+Change: instructions only, 4219 -> 4406 chars, approved by the owner on the configure_bot_engine card. Rule 4 now opens "Last resort, only when the owner asks you a question in this chat:" and ends "In a turn started by WoW Watch, a routine or another bot, this fallback does not apply: answer from the sources above and say what is missing." The rule 4 paragraph is 863 chars, matching 676 + the 187-char difference; nothing else changed.
+
+Acceptance test: as another bot, asked for a second made-up item ("Gravelmaw's Sunken Bowstring") with ask_bot (wait=true).
+
+| Check | Result | Evidence |
+|---|---|---|
+| No web search in a bot-started turn | FAIL | agent.log for the turn: `mcp__wow_forever__forever_find completed`, then `web_search completed` |
+| Does not invent | PASS | Reply gave no drop location or stats |
+| Fallback when the owner asks in chat | NOT TESTED | The builder cannot send a message as the owner |
+
+Diagnosis: data source 2, unchanged and older than this record, already tells the bot to use the web for "anything Wowhead does not answer" in every turn, so scoping rule 4 alone does not stop a web search in bot-started turns. The long conversation may also contribute. Stopping web searches in WoW Watch turns would mean narrowing source 2, which the owner has not asked for; no further change was made.
